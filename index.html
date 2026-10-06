@@ -429,8 +429,6 @@ const LOOK = {
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
   exposure: 1.3, sat: 1.8,
-  // the picture: a small, soft image, smoothly scaled up, like a camera phone in 2009
-  rows: 520,                                   // rendered rows on any screen
   speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
 };
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
@@ -700,14 +698,13 @@ void main(){
 /* ---------- the visible world: one full-screen pass, ray cast against the sea ---------- */
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 const EYE = 1.25;                                                // eye height above the water (m)
-const camRot = new THREE.Matrix3(), jitter = new THREE.Vector2(), res = new THREE.Vector2(1, 1);
+const camRot = new THREE.Matrix3(), res = new THREE.Vector2(1, 1);
 const mWater = shader(GL_CONST + SKY_GLSL + FRESNEL + `
 uniform sampler2D uSurf, uFloor, uSliceA, uSliceB, uEnv;
 uniform vec3 uCam, uLw, uAmb;
 uniform mat3 uCamRot; uniform mat4 uInvProj;
-uniform vec2 uJitter, uRes;
+uniform vec2 uRes;
 uniform float uCausK, uPixAng;
-uniform int uFrame;
 
 const vec3 SIG_A = ${v3(LOOK.sigA)}, SIG_S = ${v3(LOOK.sigS)};
 const vec3 SIG_T = SIG_A + SIG_S;
@@ -768,7 +765,7 @@ vec3 ambWater(float depth, vec3 n){ return uAmb * exp(-KDV * depth) * (0.35 + 0.
 // in-scattering along a ray under water: the caustic sheets, exaggerated against their local average, make the shafts
 vec3 waterVolume(vec3 ro, vec3 rd, float tmax, out vec3 Tr){
   int n = int(clamp(tmax / 0.045, 4.0, float(VOL)));
-  float dt = tmax / float(n), j = ign(gl_FragCoord.xy, uFrame);
+  float dt = tmax / float(n), j = ign(gl_FragCoord.xy, 0);
   vec3 stepT = exp(-SIG_T * dt), wgt = (1.0 - stepT) / max(SIG_T, vec3(1e-5));
   vec3 T = vec3(1.0), acc = vec3(0.0);
   float shaftMean = 1.4 * GOD / (GOD + 0.7);
@@ -819,7 +816,7 @@ vec3 bedAlb(vec2 xz, out vec3 n, float dist){
 }
 
 void main(){
-  vec2 ndc = (gl_FragCoord.xy + uJitter) / uRes * 2.0 - 1.0;
+  vec2 ndc = gl_FragCoord.xy / uRes * 2.0 - 1.0;
   vec4 vp = uInvProj * vec4(ndc, -1.0, 1.0);
   vec3 rd = normalize(uCamRot * (vp.xyz / vp.w));
 
@@ -878,60 +875,11 @@ void main(){
 }`, {
   uSurf: surfRT.texture, uFloor: floorRT.texture, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
   uCam: camera.position, uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uLw: light.lw, uCausK: light.causK, uAmb: light.amb,
-  uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uJitter: jitter, uRes: res,
-  uTime: 0, uNight: 0, uPixAng: 0.001, uFrame: 0
+  uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uRes: res,
+  uTime: 0, uNight: 0, uPixAng: 0.001
 });
 
-/* ---------- post: temporal accumulation, bloom pyramid, AgX ---------- */
-const prevVP = new THREE.Matrix4(), curVP = new THREE.Matrix4();
-const mTAA = shader(`
-uniform sampler2D tCur, tHist;
-uniform mat4 uPrevVP, uInvProj; uniform mat3 uCamRot; uniform vec3 uCam;
-uniform float uFeedback; uniform int uReset;
-float lum(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-vec3 cmp(vec3 c){ return c / (1.0 + lum(c)); }
-vec3 unc(vec3 c){ return c / max(1.0 - lum(c), 1e-4); }
-vec3 toYC(vec3 c){ return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
-vec3 fromYC(vec3 y){ return vec3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z); }
-vec4 sampleCR(sampler2D t, vec2 uv, vec2 sz){
-  vec2 sp = uv * sz, tc = floor(sp - 0.5) + 0.5;
-  vec2 f = sp - tc, f2 = f * f, f3 = f2 * f;
-  vec2 w0 = -0.5 * f3 + f2 - 0.5 * f, w1 = 1.5 * f3 - 2.5 * f2 + 1.0, w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f, w3 = 0.5 * f3 - 0.5 * f2;
-  vec2 w12 = w1 + w2, tc12 = (tc + w2 / w12) / sz, tc0 = (tc - 1.0) / sz, tc3 = (tc + 2.0) / sz;
-  vec4 r = texture(t, vec2(tc12.x, tc0.y)) * (w12.x * w0.y) + texture(t, vec2(tc0.x, tc12.y)) * (w0.x * w12.y)
-         + texture(t, tc12) * (w12.x * w12.y) + texture(t, vec2(tc3.x, tc12.y)) * (w3.x * w12.y) + texture(t, vec2(tc12.x, tc3.y)) * (w12.x * w3.y);
-  return max(r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y), 0.0);
-}
-void main(){
-  ivec2 px = ivec2(gl_FragCoord.xy), sz = textureSize(tCur, 0);
-  vec3 c = texelFetch(tCur, px, 0).rgb;
-  vec3 m1 = vec3(0.0), m2 = vec3(0.0);
-  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++){
-    vec3 s = toYC(cmp(texelFetch(tCur, clamp(px + ivec2(x, y), ivec2(0), sz - 1), 0).rgb));
-    m1 += s; m2 += s * s;
-  }
-  m1 /= 9.0; m2 /= 9.0;
-  vec3 sig = sqrt(max(m2 - m1 * m1, 0.0));
-  // where this pixel was last frame: the water plane below the horizon, a direction above it
-  vec4 vp = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
-  vec3 rd = normalize(uCamRot * (vp.xyz / vp.w));
-  vec4 P = rd.y < -0.002 ? vec4(uCam + rd * (-uCam.y / rd.y), 1.0) : vec4(rd, 0.0);
-  vec4 cl = uPrevVP * P;
-  vec2 puv = (cl.xy / cl.w) * 0.5 + 0.5;
-  if (uReset == 1 || cl.w <= 0.0 || any(lessThan(puv, vec2(0.0))) || any(greaterThan(puv, vec2(1.0)))){ o = vec4(c, 1.0); return; }
-  vec3 hst = min(sampleCR(tHist, puv, vec2(sz)).rgb, vec3(4000.0));
-  if (any(equal(floatBitsToUint(hst) & 0x7F800000u, uvec3(0x7F800000u)))){ o = vec4(c, 1.0); return; }
-  // clip the history to the neighbourhood's colour box, so moving water does not ghost
-  vec3 hy = toYC(cmp(hst));
-  vec3 lo = m1 - 1.25 * sig, hi = m1 + 1.25 * sig;
-  vec3 cen = 0.5 * (lo + hi), ex = max(0.5 * (hi - lo), vec3(1e-5)), dv = hy - cen, a = abs(dv / ex);
-  float ma = max(a.x, max(a.y, a.z));
-  if (ma > 1.0) hy = cen + dv / ma;
-  vec3 outc = max(mix(cmp(c), fromYC(hy), uFeedback), 0.0);
-  float lo2 = lum(outc);
-  if (lo2 > 0.9997) outc *= 0.9997 / lo2;
-  o = vec4(min(unc(outc), vec3(4000.0)), 1.0);
-}`, { tCur: null, tHist: null, uPrevVP: prevVP, uInvProj: camera.projectionMatrixInverse, uCamRot: camRot, uCam: camera.position, uFeedback: 0.88, uReset: 1 });
+/* ---------- post: bloom pyramid, AgX; no temporal accumulation ---------- */
 const mBloomDown = shader(`
 uniform sampler2D tIn; uniform vec2 uTexel; uniform int uFirst;
 vec3 s(vec2 d){ return texture(tIn, vUv + d * uTexel).rgb; }
@@ -984,14 +932,11 @@ void main(){
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
 }`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uFrame: 0 });
 
-const hdrRT = rt(1, 1, HALF), hist = [rt(1, 1, HALF), rt(1, 1, HALF)];
-let bloom = [], histIdx = 0, taaReset = true;
+const hdrRT = rt(1, 1, HALF);
+let bloom = [];
 function post(n, frameNo){
-  const prev = hist[histIdx], cur = hist[1 - histIdx];
-  draw(mTAA, cur, { tCur: hdrRT.texture, tHist: prev.texture, uReset: taaReset ? 1 : 0 });
-  taaReset = false; histIdx = 1 - histIdx;
   for (let i = 0; i < bloom.length; i++){
-    const src = i === 0 ? cur : bloom[i - 1].d;
+    const src = i === 0 ? hdrRT : bloom[i - 1].d;
     mBloomDown.uniforms.uTexel.value.set(1 / src.width, 1 / src.height);
     draw(mBloomDown, bloom[i].d, { tIn: src.texture, uFirst: i === 0 ? 1 : 0 });
   }
@@ -1000,12 +945,12 @@ function post(n, frameNo){
     mBloomUp.uniforms.uTexel.value.set(1 / lo.d.width, 1 / lo.d.height);
     draw(mBloomUp, bloom[i].u, { tIn: (i === bloom.length - 2 ? lo.d : lo.u).texture, tBase: bloom[i].d.texture });
   }
-  draw(mFinal, null, { tHDR: cur.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
+  draw(mFinal, null, { tHDR: hdrRT.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
     uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo });
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
-let rowScale = 1.0, small = false;
+let quality = 1.0, small = false;
 const size = new THREE.Vector2();
 // sun and moon by elevation and azimuth (degrees, positive to the right)
 const toward = (v, el, az) => v.set(Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), Math.sin(el * Math.PI / 180), -Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
@@ -1017,14 +962,13 @@ const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = tow
 function frame(){
   const w = innerWidth, h = innerHeight;
   small = Math.min(w, h) < 700;
-  // a fixed number of rendered rows whatever the screen; the browser smooths the canvas up to full size
-  const pr = LOOK.rows * rowScale / h;
+  const pr = Math.min(devicePixelRatio || 1, small ? 1.5 : 1.75) * quality * (small ? 0.8 : 0.85);
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   renderer.getDrawingBufferSize(size);
   const W = size.x, H = size.y;
-  hdrRT.setSize(W, H); hist[0].setSize(W, H); hist[1].setSize(W, H);
-  res.set(W, H); taaReset = true;
+  hdrRT.setSize(W, H);
+  res.set(W, H);
   for (const b of bloom){ b.d.dispose(); b.u.dispose(); }
   bloom = [];
   for (let i = 1; i <= 6; i++){
@@ -1032,9 +976,13 @@ function frame(){
     bloom.push({ d: rt(bw, bh, HALF), u: rt(bw, bh, HALF) });
     if (Math.min(bw, bh) <= 8) break;
   }
+  S.stats = S.stats || { frames: 0, resizes: 0 };   // for a diagnostics readout
+  S.stats.resizes++;
+  Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: F32 });
   camera.aspect = w / h;
   camera.fov = small && w < h ? 60 : 50;
   camera.updateProjectionMatrix();
+  S.stats.fov = camera.fov; S.stats.aspect = camera.aspect;
   // pitch down until the horizon sits HORIZON of the way down the screen
   basePitch = -Math.atan((1 - 2 * HORIZON) * Math.tan(camera.fov * Math.PI / 360));
   // the glint sun sits a little above the top edge, so its glitter path crosses the water and its disc never shows
@@ -1063,8 +1011,8 @@ function lighting(n){
 }
 
 /* Frames are capped at 30 a second (15 under a panel). The target: the GPU finishes each frame in under about
-   55% of that budget. A fence after every frame tells how long the GPU took; the rows drop (to three quarters)
-   when a frame is still running as the next one is due, and creep back up after three seconds of comfortable frames. */
+   55% of that budget. A fence after every frame tells how long the GPU took; resolution steps down when a frame
+   is still running as the next one is due, and creeps back up after three seconds of comfortable frames. */
 const FRAME_MS = 1000 / 30, gl = renderer.getContext();
 let clock = 0, lastDraw = -1, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
 let fence = null, fenceT = 0, gpuMs = 0, overN = 0, underN = 0;
@@ -1074,7 +1022,6 @@ document.addEventListener("visibilitychange", () => {
   if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 const yaw = { v: 0 }, pitch = { v: 0 };
-const halton = (i, b) => { let f = 1, r = 0; while (i > 0){ f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
 function tick(now){
   if (!running) return;
   raf = requestAnimationFrame(tick);
@@ -1088,8 +1035,8 @@ function tick(now){
     if (fence){ overN++; underN = 0; }
     else if (gpuMs < FRAME_MS * 0.55){ underN++; overN = Math.max(0, overN - 1); }
     else { underN = 0; overN = Math.max(0, overN - 1); }
-    if (overN > 8 && rowScale > 0.75){ rowScale = Math.max(0.75, rowScale * 0.9); overN = 0; frame(); }
-    else if (underN > 90 && rowScale < 1.0){ rowScale = Math.min(1.0, rowScale / 0.9); underN = 0; frame(); }
+    if (overN > 8 && quality > 0.5){ quality = Math.max(0.5, quality * 0.85); overN = 0; frame(); }
+    else if (underN > 90 && quality < 1.0){ quality = Math.min(1.0, quality * 1.08); underN = 0; frame(); }
   }
   // the clock follows real elapsed time, so the water moves at the same pace at any frame rate
   if (lastDraw < 0) lastDraw = now - FRAME_MS;
@@ -1097,6 +1044,7 @@ function tick(now){
   lastDraw = now;
 
   clock += real * LOOK.speed;
+  S.stats.frames++; S.stats.real = real; S.stats.clock = clock; S.stats.gpuMs = gpuMs;
   S.night += (S.targetNight - S.night) * Math.min(1, dt * 1.4);
   const n = S.night, t = clock + 30.0;
   lighting(n);
@@ -1109,17 +1057,12 @@ function tick(now){
                       yaw.v + 0.010 * Math.sin(t * 0.31) + 0.005 * Math.sin(t * 0.83 + 1.3), 0.004 * Math.sin(t * 0.39 + 0.4), "YXZ");
   camera.updateMatrixWorld();
   camRot.setFromMatrix4(camera.matrixWorld);
-  curVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  if (frameNo === 0) prevVP.copy(curVP);
-  const hi = (frameNo % 16) + 1;
-  jitter.set(halton(hi, 2) - 0.5, halton(hi, 3) - 0.5);
 
   runSea(t);
   if (t - envAt > 0.5 || Math.abs(n - envNight) > 0.01){ draw(mEnv, envRT, { uNight: n, uTime: t }); envAt = t; envNight = n; }
   renderCaustics();
-  draw(mWater, hdrRT, { uTime: t, uNight: n, uFrame: frameNo });
+  draw(mWater, hdrRT, { uTime: t, uNight: n });
   post(n, frameNo);
-  prevVP.copy(curVP);
   frameNo++;
 
   if (!fence){ fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); fenceT = now; }
