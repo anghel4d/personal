@@ -387,7 +387,6 @@ renderer.setClearColor(0x000000, 0);
 const S = window.A4D_STATE;            // shared with the UI: night (0..1), pointer, open
 const HALF = THREE.HalfFloatType, FFT_TYPE = F32 ? THREE.FloatType : HALF;
 const ANISO = caps.getMaxAnisotropy();
-const SMALL0 = Math.min(innerWidth, innerHeight) < 700;
 
 /* ---------- passes ---------- */
 function rt(w, h, type, o = {}){
@@ -637,7 +636,7 @@ function causScene(geo, mats){
 // the bed: one map per colour channel, each refracted with its own index (dispersion)
 const FLOOR_RES = 1024;
 const floorRT = rt(FLOOR_RES, FLOOR_RES, HALF, { repeat: true, mip: true, aniso: 8 });
-const floorScene = causScene(photonGrid(SMALL0 ? 192 : 256), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
+const floorScene = causScene(photonGrid(192), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
   .map(([ior, m]) => causMaterial(ior, m, -DBED, 0.0)));
 // the volume: eight horizontal slices from the surface to the bed, four to a texture (one per channel)
 const SLICES = 8, SLICE_RES = 256;
@@ -854,7 +853,7 @@ void main(){
   float hz = smoothstep(-0.0005, 0.0015, rd.y);
   vec3 skyc = vec3(0.0);
   if (hz > 0.0){
-    skyc = skyRadiance(rd) + min(disc(rd, 0.0), vec3(mix(1e5, 14.0, uNight)));
+    skyc = skyRadiance(rd) + uNight * min(disc(rd, 0.0), vec3(14.0));   // the moon's disc; the glint sun's never shows
     vec2 sp = floor(gl_FragCoord.xy / 1.5 + vec2(11.0, 7.0));
     float st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += uNight * st * 0.2 * (0.65 + 0.35 * sin(uTime * 1.7 + hash12(sp + 3.1) * 40.0));
@@ -980,7 +979,7 @@ function post(n, frameNo){
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
-let quality = 1.0, small = false;
+let quality = 1.0;
 const size = new THREE.Vector2();
 // sun and moon by elevation and azimuth (degrees, positive to the right)
 const toward = (v, el, az) => v.set(Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), Math.sin(el * Math.PI / 180), -Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
@@ -989,10 +988,15 @@ let basePitch = 0;
 // a high sun from the front right lights the bed hard; the moon hangs low on the left, with its glitter path
 const glintDay = new THREE.Vector3();
 const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = toward(new THREE.Vector3(), 12, -12);
+// the phone's picture on every screen: its focal length (60 degrees over the 812 CSS pixels of a phone's web view)
+// and its 1.2 render pixels per CSS pixel, so a CSS pixel shows the same piece of sea everywhere. Very wide windows
+// get a longer focal length, so the view stays within 100 degrees across.
+const PHONE_F = 406 / Math.tan(Math.PI / 6), PX_PER_CSS = 1.2;
+// the glint sun where the phone has it: 3.5 degrees above the top of the phone's 60-degree frame
+const GLINT_EL = 30 - Math.atan((1 - 2 * HORIZON) * Math.tan(Math.PI / 6)) * 180 / Math.PI + 3.5;
 function frame(){
   const w = innerWidth, h = innerHeight;
-  small = Math.min(w, h) < 700;
-  const pr = Math.min(devicePixelRatio || 1, small ? 1.5 : 1.75) * quality * (small ? 0.8 : 0.85);
+  const pr = PX_PER_CSS * quality;
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   renderer.getDrawingBufferSize(size);
@@ -1010,13 +1014,14 @@ function frame(){
   S.stats.resizes++;
   Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: F32 });
   camera.aspect = w / h;
-  camera.fov = small && w < h ? 60 : 50;
+  const focal = Math.max(PHONE_F, Math.max(w, h) / 2 / Math.tan(50 * Math.PI / 180));
+  camera.fov = 2 * Math.atan(h / 2 / focal) * 180 / Math.PI;
   camera.updateProjectionMatrix();
-  S.stats.fov = camera.fov; S.stats.aspect = camera.aspect;
+  S.stats.fov = +camera.fov.toFixed(2); S.stats.aspect = camera.aspect;
   // pitch down until the horizon sits HORIZON of the way down the screen
   basePitch = -Math.atan((1 - 2 * HORIZON) * Math.tan(camera.fov * Math.PI / 360));
   // the glint sun sits a little above the top edge, so its glitter path crosses the water and its disc never shows
-  toward(glintDay, (camera.fov / 2 + basePitch * 180 / Math.PI) + 3.5, 4);
+  toward(glintDay, GLINT_EL, 4);
   mWater.uniforms.uPixAng.value = 2 * Math.tan(camera.fov * Math.PI / 360) / H;
 }
 const sunColDay = new THREE.Vector3(1.0, 0.95, 0.88).multiplyScalar(5.0);
