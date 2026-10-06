@@ -42,7 +42,7 @@ body{
   background:var(--scene);
   font-family:var(--serif);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
-canvas#sea{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
+canvas#sea{position:fixed;left:0;top:0;width:100%;height:100%;display:block;z-index:0;image-rendering:pixelated}
 a{color:inherit}
 :focus-visible{outline:1.5px solid var(--focus);outline-offset:4px;border-radius:2px}
 
@@ -360,7 +360,6 @@ renderer.setClearColor(0x000000, 0);
 const S = window.A4D_STATE;            // shared with the UI: night (0..1), pointer, reduce, open
 const HALF = THREE.HalfFloatType, FFT_TYPE = F32 ? THREE.FloatType : HALF;
 const ANISO = caps.getMaxAnisotropy();
-const SMALL0 = Math.min(innerWidth, innerHeight) < 700;
 
 /* ---------- passes ---------- */
 function rt(w, h, type, o = {}){
@@ -431,8 +430,12 @@ const LOOK = {
   sun: [55, 30],                               // elevation, azimuth (degrees, positive to the right)
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
-  exposure: 1.3, sat: 1.8
+  exposure: 1.3, sat: 1.8,
+  speed: 0.75,                                 // how fast the water moves: 1 is real time for these waves
+  rows: 300,                                   // rendered rows; each pixel is upscaled to a whole block of screen pixels
+  levels: 0                                    // 0 keeps full colour; 8 to 32 quantises each channel with an ordered dither, like a GIF
 };
+S.look = LOOK;                                 // read live every frame (speed, rows, levels)
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
 
 /* ---------- the sea: a JONSWAP spectrum with a cross swell, choppy FFT over a 4.2 m patch ---------- */
@@ -607,9 +610,9 @@ function causScene(geo, mats){
   return sc;
 }
 // the bed: one map per colour channel, each refracted with its own index (dispersion)
-const FLOOR_RES = 1024;
+const FLOOR_RES = 512;
 const floorRT = rt(FLOOR_RES, FLOOR_RES, HALF, { repeat: true, mip: true, aniso: 8 });
-const floorScene = causScene(photonGrid(SMALL0 ? 192 : 256), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
+const floorScene = causScene(photonGrid(192), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
   .map(([ior, m]) => causMaterial(ior, m, -DBED, 0.0)));
 // the volume: eight horizontal slices from the surface to the bed, four to a texture (one per channel)
 const SLICES = 8, SLICE_RES = 256;
@@ -828,7 +831,7 @@ void main(){
   vec3 skyc = vec3(0.0);
   if (hz > 0.0){
     skyc = skyRadiance(rd) + min(disc(rd, 0.0), vec3(mix(1e5, 14.0, uNight)));
-    vec2 sp = floor(gl_FragCoord.xy / 1.5 + vec2(11.0, 7.0));
+    vec2 sp = floor(gl_FragCoord.xy + vec2(11.0, 7.0));
     float st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += uNight * st * 0.2 * (0.65 + 0.35 * sin(uTime * 1.7 + hash12(sp + 3.1) * 40.0));
     if (hz >= 1.0){ o = vec4(skyc, 1.0); return; }
@@ -957,7 +960,7 @@ void main(){
   o = vec4(r / 16.0 + texture(tBase, vUv).rgb, 1.0);
 }`, { tIn: null, tBase: null, uTexel: new THREE.Vector2() });
 const mFinal = shader(`
-uniform sampler2D tHDR, tBloom; uniform float uExposure, uTime, uNight; uniform int uFrame;
+uniform sampler2D tHDR, tBloom; uniform float uExposure, uTime, uNight, uLevels; uniform int uFrame;
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec3 agxContrast(vec3 x){ vec3 x2 = x * x, x4 = x2 * x2; return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232; }
 vec3 agx(vec3 v){
@@ -981,8 +984,15 @@ void main(){
   c *= mix(1.0, smoothstep(1.25, 0.25, length(d * vec2(1.0, 0.82)) * 1.35), mix(0.35, 0.5, uNight));
   vec3 t = agxOut(agxLook(agx(c)));
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
+  if (uLevels > 1.5){
+    // quantise each channel with a 4x4 ordered (Bayer) dither
+    ivec2 b = ivec2(gl_FragCoord.xy) & 3;
+    int b0 = (b.x & 1) * 2 + (b.y & 1) * 3 - (b.x & b.y & 1) * 4, b1 = (b.x >> 1) * 2 + (b.y >> 1) * 3 - ((b.x >> 1) & (b.y >> 1)) * 4;
+    float bayer = (float(b0 * 4 + b1) + 0.5) / 16.0 - 0.5;
+    t = floor(t * (uLevels - 1.0) + 0.5 + bayer) / (uLevels - 1.0);
+  }
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
-}`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uFrame: 0 });
+}`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uLevels: 0, uFrame: 0 });
 
 const hdrRT = rt(1, 1, HALF), hist = [rt(1, 1, HALF), rt(1, 1, HALF)];
 let bloom = [], histIdx = 0, taaReset = true;
@@ -1001,11 +1011,11 @@ function post(n, frameNo){
     draw(mBloomUp, bloom[i].u, { tIn: (i === bloom.length - 2 ? lo.d : lo.u).texture, tBase: bloom[i].d.texture });
   }
   draw(mFinal, null, { tHDR: cur.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
-    uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo });
+    uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uLevels: LOOK.levels, uFrame: frameNo });
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
-let quality = 1.0, small = false;
+let pxScale = 1.0, small = false, block = 1, rowsNow = 0;
 const size = new THREE.Vector2();
 // sun and moon by elevation and azimuth (degrees, positive to the right)
 const toward = (v, el, az) => v.set(Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), Math.sin(el * Math.PI / 180), -Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
@@ -1015,13 +1025,18 @@ let basePitch = 0;
 const glintDay = new THREE.Vector3();
 const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = toward(new THREE.Vector3(), 12, -12);
 function frame(){
-  const w = innerWidth, h = innerHeight;
+  const w = innerWidth, h = innerHeight, dpr = devicePixelRatio || 1;
   small = Math.min(w, h) < 700;
-  const pr = Math.min(devicePixelRatio || 1, small ? 1.5 : 1.75) * quality * (small ? 0.8 : 0.85);
-  renderer.setPixelRatio(pr);
-  renderer.setSize(w, h, false);
-  renderer.getDrawingBufferSize(size);
-  const W = size.x, H = size.y;
+  // render a fixed number of rows; every rendered pixel covers a whole block of device pixels, and the browser
+  // scales the canvas up with nearest-neighbour sampling, so the pixels stay crisp and even
+  const devW = Math.round(w * dpr), devH = Math.round(h * dpr);
+  rowsNow = LOOK.rows;
+  block = Math.max(1, Math.round(devH / LOOK.rows * pxScale));
+  const W = Math.ceil(devW / block), H = Math.ceil(devH / block);
+  size.set(W, H);
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H, false);
+  canvas.style.width = (W * block / dpr) + "px"; canvas.style.height = (H * block / dpr) + "px";
   hdrRT.setSize(W, H); hist[0].setSize(W, H); hist[1].setSize(W, H);
   res.set(W, H); taaReset = true;
   for (const b of bloom){ b.d.dispose(); b.u.dispose(); }
@@ -1031,7 +1046,7 @@ function frame(){
     bloom.push({ d: rt(bw, bh, HALF), u: rt(bw, bh, HALF) });
     if (Math.min(bw, bh) <= 8) break;
   }
-  camera.aspect = w / h;
+  camera.aspect = W / H;
   camera.fov = small && w < h ? 60 : 50;
   camera.updateProjectionMatrix();
   // pitch down until the horizon sits HORIZON of the way down the screen
@@ -1062,15 +1077,16 @@ function lighting(n){
 }
 
 /* Frames are capped at 30 a second (15 under a panel). The target: the GPU finishes each frame in under about
-   55% of that budget. A fence after every frame tells how long the GPU took; resolution steps down when a frame
-   is still running as the next one is due, and creeps back up after three seconds of comfortable frames. */
+   55% of that budget. A fence after every frame tells how long the GPU took; the pixels grow when a frame is
+   still running as the next one is due, and shrink back after three seconds of comfortable frames.
+   The water's clock is real elapsed time times LOOK.speed, so it runs at the same pace at any frame rate. */
 const FRAME_MS = 1000 / 30, gl = renderer.getContext();
-let clock = 0, lastDraw = -1e9, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
+let clock = 0, wall = 0, lastDraw = -1, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
 let fence = null, fenceT = 0, gpuMs = 0, overN = 0, underN = 0;
 let envAt = -1, envNight = -1;
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
-  if (running){ lastDraw = nextDraw = performance.now() - FRAME_MS; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 const yaw = { v: 0 }, pitch = { v: 0 };
 const halton = (i, b) => { let f = 1, r = 0; while (i > 0){ f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
@@ -1087,22 +1103,28 @@ function tick(now){
     if (fence){ overN++; underN = 0; }
     else if (gpuMs < FRAME_MS * 0.55){ underN++; overN = Math.max(0, overN - 1); }
     else { underN = 0; overN = Math.max(0, overN - 1); }
-    if (overN > 8 && quality > 0.5){ quality = Math.max(0.5, quality * 0.85); overN = 0; frame(); }
-    else if (underN > 90 && quality < 1.0){ quality = Math.min(1.0, quality * 1.08); underN = 0; frame(); }
+    if (overN > 8 && pxScale < 2.0){ pxScale = Math.min(2.0, pxScale * 1.2); overN = 0; frame(); }
+    else if (underN > 90 && pxScale > 1.0){ pxScale = Math.max(1.0, pxScale / 1.2); underN = 0; frame(); }
   }
-  const dt = Math.min(0.1, (now - lastDraw) / 1000); lastDraw = now;
+  if (LOOK.rows !== rowsNow) frame();
+  if (lastDraw < 0) lastDraw = now - FRAME_MS;
+  const real = Math.min(0.5, (now - lastDraw) / 1000), dt = Math.min(0.1, real);
+  lastDraw = now;
 
-  clock += dt * (S.reduce ? 0.12 : 1.0);
+  const pace = S.reduce ? 0.12 : 1.0;
+  clock += real * LOOK.speed * pace;             // the water and the clouds
+  wall += real * pace;                           // the handheld drift of the camera
   S.night += (S.targetNight - S.night) * Math.min(1, dt * 1.4);
-  const n = S.night, t = clock + 30.0;
+  const n = S.night, t = clock + 30.0, tw = wall + 30.0;
+  S.stats = { w: size.x, h: size.y, block, gpuMs, fps: 1 / Math.max(real, 1e-3) };
   lighting(n);
 
   // the pointer turns the head a little; a slow handheld drift keeps the frame alive
   yaw.v += ((-S.pointer[0]) * 0.035 - yaw.v) * Math.min(1, dt * 1.1);
   pitch.v += ((-S.pointer[1]) * 0.012 - pitch.v) * Math.min(1, dt * 1.1);
-  camera.position.set(0.03 * Math.sin(t * 0.21), EYE + 0.015 * Math.sin(t * 0.57), 0.03 * Math.cos(t * 0.17));
-  camera.rotation.set(basePitch + pitch.v + 0.004 * Math.sin(t * 0.47 + 2.0) + 0.002 * Math.sin(t * 1.13),
-                      yaw.v + 0.010 * Math.sin(t * 0.31) + 0.005 * Math.sin(t * 0.83 + 1.3), 0.004 * Math.sin(t * 0.39 + 0.4), "YXZ");
+  camera.position.set(0.03 * Math.sin(tw * 0.21), EYE + 0.015 * Math.sin(tw * 0.57), 0.03 * Math.cos(tw * 0.17));
+  camera.rotation.set(basePitch + pitch.v + 0.004 * Math.sin(tw * 0.47 + 2.0) + 0.002 * Math.sin(tw * 1.13),
+                      yaw.v + 0.010 * Math.sin(tw * 0.31) + 0.005 * Math.sin(tw * 0.83 + 1.3), 0.004 * Math.sin(tw * 0.39 + 0.4), "YXZ");
   camera.updateMatrixWorld();
   camRot.setFromMatrix4(camera.matrixWorld);
   curVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
