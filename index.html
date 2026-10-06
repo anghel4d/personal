@@ -122,9 +122,6 @@ nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-
 @media (max-height:520px) and (orientation:landscape){
   .statement{font-size:clamp(15px,4.3vh,22px);line-height:1.25}
 }
-@media (prefers-reduced-motion:reduce){
-  .statement,.layer > .inner,.veil{transition:none}
-}
 </style>
 <style>
 canvas#sea{opacity:0;transition:opacity 1.6s ease}
@@ -177,7 +174,7 @@ body,.chrome,.statement{transition:color 1.2s ease}
 <script>
 
 /* ---------------- copy ---------------- */
-window.A4D_STATE = { night: 0, targetNight: 0, pointer: [0, 0], open: false, reduce: matchMedia("(prefers-reduced-motion: reduce)").matches };
+window.A4D_STATE = { night: 0, targetNight: 0, pointer: [0, 0], open: false };
 const S = window.A4D_STATE;
 addEventListener("pointermove", e => { S.pointer = [ (e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1 ]; }, { passive: true });
 const T = {
@@ -357,7 +354,7 @@ if (!caps.isWebGL2 || !(F32 || ext.has("EXT_color_buffer_half_float"))) { render
 renderer.autoClear = false;
 renderer.setClearColor(0x000000, 0);
 
-const S = window.A4D_STATE;            // shared with the UI: night (0..1), pointer, reduce, open
+const S = window.A4D_STATE;            // shared with the UI: night (0..1), pointer, open
 const HALF = THREE.HalfFloatType, FFT_TYPE = F32 ? THREE.FloatType : HALF;
 const ANISO = caps.getMaxAnisotropy();
 const SMALL0 = Math.min(innerWidth, innerHeight) < 700;
@@ -431,7 +428,10 @@ const LOOK = {
   sun: [55, 30],                               // elevation, azimuth (degrees, positive to the right)
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
-  exposure: 1.3, sat: 1.8
+  exposure: 1.3, sat: 1.8,
+  // the picture: a small, soft image, smoothly scaled up, like a camera phone in 2009
+  rows: 520,                                   // rendered rows on any screen
+  speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
 };
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
 
@@ -1005,7 +1005,7 @@ function post(n, frameNo){
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
-let quality = 1.0, small = false;
+let rowScale = 1.0, small = false;
 const size = new THREE.Vector2();
 // sun and moon by elevation and azimuth (degrees, positive to the right)
 const toward = (v, el, az) => v.set(Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), Math.sin(el * Math.PI / 180), -Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
@@ -1017,7 +1017,8 @@ const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = tow
 function frame(){
   const w = innerWidth, h = innerHeight;
   small = Math.min(w, h) < 700;
-  const pr = Math.min(devicePixelRatio || 1, small ? 1.5 : 1.75) * quality * (small ? 0.8 : 0.85);
+  // a fixed number of rendered rows whatever the screen; the browser smooths the canvas up to full size
+  const pr = LOOK.rows * rowScale / h;
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   renderer.getDrawingBufferSize(size);
@@ -1062,15 +1063,15 @@ function lighting(n){
 }
 
 /* Frames are capped at 30 a second (15 under a panel). The target: the GPU finishes each frame in under about
-   55% of that budget. A fence after every frame tells how long the GPU took; resolution steps down when a frame
-   is still running as the next one is due, and creeps back up after three seconds of comfortable frames. */
+   55% of that budget. A fence after every frame tells how long the GPU took; the rows drop (to three quarters)
+   when a frame is still running as the next one is due, and creep back up after three seconds of comfortable frames. */
 const FRAME_MS = 1000 / 30, gl = renderer.getContext();
-let clock = 0, lastDraw = -1e9, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
+let clock = 0, lastDraw = -1, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
 let fence = null, fenceT = 0, gpuMs = 0, overN = 0, underN = 0;
 let envAt = -1, envNight = -1;
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
-  if (running){ lastDraw = nextDraw = performance.now() - FRAME_MS; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 const yaw = { v: 0 }, pitch = { v: 0 };
 const halton = (i, b) => { let f = 1, r = 0; while (i > 0){ f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
@@ -1087,12 +1088,15 @@ function tick(now){
     if (fence){ overN++; underN = 0; }
     else if (gpuMs < FRAME_MS * 0.55){ underN++; overN = Math.max(0, overN - 1); }
     else { underN = 0; overN = Math.max(0, overN - 1); }
-    if (overN > 8 && quality > 0.5){ quality = Math.max(0.5, quality * 0.85); overN = 0; frame(); }
-    else if (underN > 90 && quality < 1.0){ quality = Math.min(1.0, quality * 1.08); underN = 0; frame(); }
+    if (overN > 8 && rowScale > 0.75){ rowScale = Math.max(0.75, rowScale * 0.9); overN = 0; frame(); }
+    else if (underN > 90 && rowScale < 1.0){ rowScale = Math.min(1.0, rowScale / 0.9); underN = 0; frame(); }
   }
-  const dt = Math.min(0.1, (now - lastDraw) / 1000); lastDraw = now;
+  // the clock follows real elapsed time, so the water moves at the same pace at any frame rate
+  if (lastDraw < 0) lastDraw = now - FRAME_MS;
+  const real = Math.min(0.5, (now - lastDraw) / 1000), dt = Math.min(0.1, real);
+  lastDraw = now;
 
-  clock += dt * (S.reduce ? 0.12 : 1.0);
+  clock += real * LOOK.speed;
   S.night += (S.targetNight - S.night) * Math.min(1, dt * 1.4);
   const n = S.night, t = clock + 30.0;
   lighting(n);
