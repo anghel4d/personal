@@ -472,8 +472,11 @@ const LOOK = {
   exposure: 1.5,                               // scene to GT7 frame-buffer units (1.0 = 100 nits)
   grade: { sat: [1.35, 2.4], hue: [0, 15] },   // before tone mapping, day and night: saturation, and a turn of the
                                                // colours (degrees) that brings the night's blues to royal blue
-  myopia: { sharp: 3, blur: 0.3, night: 1.4 }, // slightly short-sighted eye: sharp to 3 m, then a defocus that grows to
-                                               // 0.3 degrees across at the horizon; the dilated night pupil adds 40%
+  myopia: { sharp: [3.25, 3, 2.6], blur: 0.3, night: 1.4 },   // slightly short-sighted eye: sharp to its far point, then a
+                                               // defocus that grows to 0.3 degrees across at the horizon (green); the dilated
+                                               // night pupil adds 40%. Far points for red, green and blue (m): the eye's own
+                                               // chromatic error is longitudinal, blue focusing furthest in front of the
+                                               // retina, so far off blue blurs a little wider than red (the duochrome test)
   haze: { veil: [0.35, 0.15], blur: [1.5, 0.8], glow: [0.05, 0.03], up: 3, down: 1 },   // around the horizon, day and
                                                // night: airlight veil, softening (px) and forward-scatter glow at the
                                                // horizon; the band's half-heights above and below it (degrees)
@@ -1359,6 +1362,7 @@ uniform sampler2D tHDR, tBloom; uniform float uExposure, uNight, uBlurPx, uHazeV
 uniform vec3 uAir, uGlint; uniform mat3 uCamRot, uGrade; uniform mat4 uInvProj;
 const float HZ_UP = ${HZ.up.toFixed(6)}, HZ_DOWN = ${HZ.down.toFixed(6)};
 const float MOON_Q1 = ${(2 * LOOK.moon.size ** 2).toExponential(4)}, MOON_Q2 = ${(8 * LOOK.moon.size ** 2).toExponential(4)};   // 1 - cos of 2 and 4 moon radii
+const vec3 MYOPIA = vec3(${LOOK.myopia.sharp.map(x => (LOOK.myopia.sharp[1] / x).toFixed(4)).join(", ")});   // each channel's defocus far off, against green's
 // the frame blurred by a Gaussian of about 0.6 * 2^lod pixels: each of the two nearest mip levels read with a cubic
 // B-spline in four bilinear taps, on its own grid, then blended. Same cost for any radius; the GPU builds the mips.
 vec3 bspline(vec2 uv, int lv){
@@ -1371,11 +1375,15 @@ vec3 bspline(vec2 uv, int lv){
   return (textureLod(tHDR, h0, l).rgb * g0.x + textureLod(tHDR, vec2(h1.x, h0.y), l).rgb * g1.x) * g0.y
        + (textureLod(tHDR, vec2(h0.x, h1.y), l).rgb * g0.x + textureLod(tHDR, h1, l).rgb * g1.x) * g1.y;
 }
-vec3 blurred(vec2 uv, float lod){
-  int l0 = int(lod); float fr = lod - float(l0);
-  if (fr < 0.02) return bspline(uv, l0);
-  if (fr > 0.98) return bspline(uv, l0 + 1);
-  return mix(bspline(uv, l0), bspline(uv, l0 + 1), fr);
+// level -1 is the frame itself; 0 and up, its mips through the B-spline
+vec3 level(vec2 uv, int l){ return l < 0 ? textureLod(tHDR, uv, 0.0).rgb : bspline(uv, l); }
+// each channel at its own level m (m.r <= m.g <= m.b): blended between its two nearest, three levels at most. The
+// levels are graded first: the eye comes after the scene's colours, so the grade does not turn a blue rim violet.
+vec3 blurred(vec2 uv, vec3 m){
+  float l0 = floor(m.r); vec3 w = min(m - l0, 2.0); int l = int(l0);
+  vec3 c = (uGrade * level(uv, l)) * max(1.0 - w, 0.0) + (uGrade * level(uv, l + 1)) * (1.0 - abs(w - 1.0));
+  if (w.b > 1.0) c += (uGrade * level(uv, l + 2)) * max(w - 1.0, 0.0);
+  return c;
 }
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 
@@ -1427,26 +1435,24 @@ void main(){
   // around bright things (the bloom pyramid, already read here, weighted up); the rest arrives unscattered.
   float s0 = sy >= 0.0 ? HZ_UP : HZ_DOWN, f = 1.0 - exp(-3.0 * s0 / (abs(sy) + s0));
   // Defocus of a slightly short-sighted eye: sharp to its far point, then a disc that grows with 1/far - 1/distance;
-  // a disc of diameter D spreads like a Gaussian of D / 4. The two blurs add in quadrature: one lookup for both.
-  // At night the eye looks at the moon: no defocus within two moon radii of it, full defocus from four.
+  // a disc of diameter D spreads like a Gaussian of D / 4. The eye's chromatic error is longitudinal: each colour has
+  // its own far point, blue's nearest, so far off blue's disc is a little wider than red's. Haze and defocus add in
+  // quadrature: one lookup for both. At night the eye looks at the moon: no defocus within two moon radii of it, full
+  // defocus from four.
   float onMoon = uNight * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, uGlint)));
-  float dof = 0.25 * uBlurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon), hb = uHazeS * f;
-  float sig = sqrt(dof * dof + hb * hb);
-  vec3 c;
-  if (sig > 0.6) c = blurred(vUv, log2(sig / 0.6));
-  else {
-    vec2 ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                         // only a gentle colour fringe on the moon the eye looks at
-    vec3 c0 = texture(tHDR, vUv).rgb;
-    c = vec3(texture(tHDR, vUv - ca).r, c0.g, texture(tHDR, vUv + ca).b);
-    // a shifted channel stays within 1.6x of the pixel's own: soft edges keep their fringe, a blown highlight's edge
-    // does not turn violet
-    c = vec3(clamp(c.r, c0.r / 1.6 - 0.01, c0.r * 1.6 + 0.01), c.g, clamp(c.b, c0.b / 1.6 - 0.01, c0.b * 1.6 + 0.01));
-    if (sig > 0.15) c = mix(c, blurred(vUv, 0.0), sig / 0.6);      // below 0.15 px a blur cannot be seen
-  }
+  vec3 dof = 0.25 * uBlurPx * max(MYOPIA + sy * ${(LOOK.myopia.sharp[1] / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon);
+  float hb = uHazeS * f;
+  vec3 sig = sqrt(dof * dof + hb * hb);
+  // per channel: from 0.6 px a mip level (level 0's B-spline is a Gaussian of 0.6 px); from 0.15 to 0.6 px a blend
+  // from the frame itself to level 0; below 0.15 px a blur cannot be seen
+  vec3 m = mix(log2(max(sig, 0.6) / 0.6), clamp((sig - 0.15) / 0.45, 0.0, 1.0) - 1.0, lessThan(sig, vec3(0.6)));
+  // the grade (chroma scaled and turned about the grey axis; neutrals stay put) is applied to each level, the bloom
+  // and the airlight (on the CPU)
+  vec3 c = m.b > -1.0 ? blurred(vUv, m) : uGrade * texture(tHDR, vUv).rgb;
   c = mix(c, uAir, uHazeV * f);                                            // airlight
-  c += texture(tBloom, vUv).rgb * (0.045 + uHazeG * f);
+  c += uGrade * texture(tBloom, vUv).rgb * (0.045 + uHazeG * f);
   c *= uExposure * mix(1.0, smoothstep(1.25, 0.25, length(d * vec2(1.0, 0.82)) * 1.35), mix(0.35, 0.5, uNight));
-  c = max(uGrade * c, 0.0);                    // grade: chroma scaled and turned about the grey axis; neutrals stay put
+  c = max(c, 0.0);
   vec3 t = srgbOetf(clamp(rec2020to709(gt7(rec709to2020(c))), 0.0, 1.0));
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
@@ -1474,8 +1480,8 @@ function grade(n){
   mFinal.uniforms.uGrade.value.set(...M[0], ...M[1], ...M[2]);
 }
 function post(n, frameNo){
-  airlight(n);
   grade(n);
+  airlight(n).applyMatrix3(mFinal.uniforms.uGrade.value);   // the airlight, graded
   for (let i = 0; i < bloom.length; i++){
     const src = i === 0 ? hdrRT : bloom[i - 1].d;
     mBloomDown.uniforms.uTexel.value.set(1 / src.width, 1 / src.height);
@@ -2261,6 +2267,7 @@ const finalWGSL = FRAME + `
 @group(0) @binding(3) var sClamp: sampler;
 const HZ_UP = ${HZ.up.toFixed(6)}; const HZ_DOWN = ${HZ.down.toFixed(6)};
 const MOON_Q1 = ${(2 * LOOK.moon.size ** 2).toExponential(4)}; const MOON_Q2 = ${(8 * LOOK.moon.size ** 2).toExponential(4)};   // 1 - cos of 2 and 4 moon radii
+const MYOPIA = vec3f(${LOOK.myopia.sharp.map(x => (LOOK.myopia.sharp[1] / x).toFixed(4)).join(", ")});   // each channel's defocus far off, against green's
 struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VO {     // the canvas: its row 0 is the top of the screen
   let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
@@ -2276,11 +2283,18 @@ fn bspline(uv: vec2f, lv: i32) -> vec3f {
   return (textureSampleLevel(tHDR, sClamp, h0, l).rgb * g0.x + textureSampleLevel(tHDR, sClamp, vec2f(h1.x, h0.y), l).rgb * g1.x) * g0.y
        + (textureSampleLevel(tHDR, sClamp, vec2f(h0.x, h1.y), l).rgb * g0.x + textureSampleLevel(tHDR, sClamp, h1, l).rgb * g1.x) * g1.y;
 }
-fn blurred(uv: vec2f, lod: f32) -> vec3f {
-  let l0 = i32(lod); let fr = lod - f32(l0);
-  if (fr < 0.02) { return bspline(uv, l0); }
-  if (fr > 0.98) { return bspline(uv, l0 + 1); }
-  return mix(bspline(uv, l0), bspline(uv, l0 + 1), fr);
+// level -1 is the frame itself; 0 and up, its mips through the B-spline
+fn level(uv: vec2f, l: i32) -> vec3f {
+  if (l < 0) { return textureSampleLevel(tHDR, sClamp, uv, 0.0).rgb; }
+  return bspline(uv, l);
+}
+// each channel at its own level m (m.r <= m.g <= m.b): blended between its two nearest, three levels at most. The
+// levels are graded first: the eye comes after the scene's colours, so the grade does not turn a blue rim violet.
+fn blurred(uv: vec2f, m: vec3f) -> vec3f {
+  let l0 = floor(m.r); let w = min(m - l0, vec3f(2.0)); let l = i32(l0);
+  var c = (F.grade * level(uv, l)) * max(1.0 - w, vec3f(0.0)) + (F.grade * level(uv, l + 1)) * (1.0 - abs(w - 1.0));
+  if (w.b > 1.0) { c += (F.grade * level(uv, l + 2)) * max(w - 1.0, vec3f(0.0)); }
+  return c;
 }
 fn hash12(p: vec2f) -> f32 { var p3 = fract(vec3f(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 const GT_P = ${GT7.peak.toFixed(4)}; const GT_MID = 0.538; const GT_LIN = 0.444; const GT_TOE = 1.28; const GT_I = ${GT7.targetI.toFixed(6)};
@@ -2323,23 +2337,17 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   let s0 = select(HZ_DOWN, HZ_UP, sy >= 0.0); let f = 1.0 - exp(-3.0 * s0 / (abs(sy) + s0));
   // at night the eye looks at the moon: no defocus within two moon radii of it, full defocus from four
   let onMoon = F.night * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, F.glint)));
-  let dof = 0.25 * F.blurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon); let hb = F.hazeS * f;
+  let dof = 0.25 * F.blurPx * max(MYOPIA + sy * ${(LOOK.myopia.sharp[1] / 1.25).toFixed(4)}, vec3f(0.0)) * (1.0 - onMoon); let hb = F.hazeS * f;
   let sig = sqrt(dof * dof + hb * hb);
+  // per channel: from 0.6 px a mip level (level 0's B-spline is a Gaussian of 0.6 px); from 0.15 to 0.6 px a blend
+  // from the frame itself to level 0; below 0.15 px a blur cannot be seen
+  let m = select(log2(max(sig, vec3f(0.6)) / 0.6), clamp((sig - 0.15) / 0.45, vec3f(0.0), vec3f(1.0)) - 1.0, sig < vec3f(0.6));
   var c: vec3f;
-  if (sig > 0.6) { c = blurred(i.uv, log2(sig / 0.6)); }
-  else {
-    let ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                           // only a gentle colour fringe on the moon the eye looks at
-    let c0 = textureSampleLevel(tHDR, sClamp, i.uv, 0.0).rgb;
-    c = vec3f(textureSampleLevel(tHDR, sClamp, i.uv - ca, 0.0).r, c0.g, textureSampleLevel(tHDR, sClamp, i.uv + ca, 0.0).b);
-    // a shifted channel stays within 1.6x of the pixel's own: soft edges keep their fringe, a blown highlight's edge
-    // does not turn violet
-    c = vec3f(clamp(c.r, c0.r / 1.6 - 0.01, c0.r * 1.6 + 0.01), c.g, clamp(c.b, c0.b / 1.6 - 0.01, c0.b * 1.6 + 0.01));
-    if (sig > 0.15) { c = mix(c, blurred(i.uv, 0.0), sig / 0.6); }
-  }
-  c = mix(c, F.air, F.hazeV * f);
-  c += textureSampleLevel(tBloom, sClamp, i.uv, 0.0).rgb * (0.045 + F.hazeG * f);
+  if (m.b > -1.0) { c = blurred(i.uv, m); } else { c = F.grade * textureSampleLevel(tHDR, sClamp, i.uv, 0.0).rgb; }
+  c = mix(c, F.air, F.hazeV * f);                                          // the airlight, graded on the CPU
+  c += F.grade * textureSampleLevel(tBloom, sClamp, i.uv, 0.0).rgb * (0.045 + F.hazeG * f);
   c *= F.exposure * mix(1.0, 1.0 - smoothstep(0.25, 1.25, length(d * vec2f(1.0, 0.82)) * 1.35), mix(0.35, 0.5, F.night));
-  c = max(F.grade * c, vec3f(0.0));
+  c = max(c, vec3f(0.0));
   var t = srgbOetf(clamp(rec2020to709(gt7(rec709to2020(c))), vec3f(0.0), vec3f(1.0)));
   t += (hash12(fc + f32(i32(F.frame) % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   return vec4f(clamp(t, vec3f(0.0), vec3f(1.0)), 1.0);
@@ -2655,8 +2663,9 @@ function uniforms(t, n, frameNo, cam, mw){
   frameF[52] = W; frameF[53] = H;
   frameF[54] = LOOK.myopia.blur * Math.PI / 180 / pixAng * (1 + (LOOK.myopia.night - 1) * n);
   frameF[55] = LOOK.exposure * (1.0 + 2.2 * n);
-  put(56, airlight(n)); frameF[59] = LOOK.haze.veil[0] + (LOOK.haze.veil[1] - LOOK.haze.veil[0]) * n;
-  const G = grade(n); put(60, [G[0][0], G[1][0], G[2][0]]); put(64, [G[0][1], G[1][1], G[2][1]]); put(68, [G[0][2], G[1][2], G[2][2]]);
+  const G = grade(n), air = airlight(n);
+  put(56, G.map(r => r[0] * air[0] + r[1] * air[1] + r[2] * air[2])); frameF[59] = LOOK.haze.veil[0] + (LOOK.haze.veil[1] - LOOK.haze.veil[0]) * n;
+  put(60, [G[0][0], G[1][0], G[2][0]]); put(64, [G[0][1], G[1][1], G[2][1]]); put(68, [G[0][2], G[1][2], G[2][2]]);
   frameF[72] = LOOK.haze.blur[0] + (LOOK.haze.blur[1] - LOOK.haze.blur[0]) * n;
   frameF[73] = LOOK.haze.glow[0] + (LOOK.haze.glow[1] - LOOK.haze.glow[0]) * n;
   device.queue.writeBuffer(frameU, 0, frameF);
