@@ -366,9 +366,10 @@ requestAnimationFrame(() => setTimeout(() => body.classList.add("ready"), 60));
 /* ================= the lagoon: three.js =================
    The water follows CAUSTIC//VOLUME by Scottie (MIT, see licenses/caustic-volume.txt): a choppy JONSWAP FFT sea,
    photon-grid caustics on a sand bed and through a stack of depth slices, light shafts measured against the
-   slices' local average, a sky with drifting cumulus, temporal accumulation, a bloom pyramid and AgX. The FFT pass,
-   the height-field intersection and the B-spline filter come from Clearwater by Aurélien at Lumaris (MIT, see
-   licenses/clearwater.txt). three.js is a thin layer over WebGL2 here: every pass is a RawShaderMaterial drawn into a render target. */
+   slices' local average, a sky with drifting cumulus and a bloom pyramid. The FFT pass, the height-field intersection
+   and the B-spline filter come from Clearwater by Aurélien at Lumaris (MIT, see licenses/clearwater.txt). Tone mapping
+   is GT7's, ported from Polyphony Digital's sample implementation (MIT, see licenses/gt7-tone-mapping.txt). three.js is
+   a thin layer over WebGL2 here: every pass is a RawShaderMaterial drawn into a render target. */
 (function(){
 const root = document.documentElement;
 const noGL = () => root.classList.add("no-gl");
@@ -460,9 +461,14 @@ const LOOK = {
                                                // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
   facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
-  exposure: 1.3, sat: 1.8,
+  exposure: 1.5,                               // scene to GT7 frame-buffer units (1.0 = 100 nits)
+  grade: { sat: [1.35, 2.4], hue: [0, 15] },   // before tone mapping, day and night: saturation, and a turn of the
+                                               // colours (degrees) that brings the night's blues to royal blue
   myopia: { sharp: 3, blur: 0.3, night: 1.4 }, // slightly short-sighted eye: sharp to 3 m, then a defocus that grows to
                                                // 0.3 degrees across at the horizon; the dilated night pupil adds 40%
+  haze: { veil: [0.35, 0.15], blur: [1.5, 0.8], glow: [0.05, 0.03], up: 3, down: 1 },   // around the horizon, day and
+                                               // night: airlight veil, softening (px) and forward-scatter glow at the
+                                               // horizon; the band's half-heights above and below it (degrees)
   speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
 };
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
@@ -914,7 +920,7 @@ void main(){
     vec2 sp = floor(gl_FragCoord.xy / 1.5 + vec2(11.0, 7.0));
     float st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += uNight * st * 0.2 * (0.65 + 0.35 * sin(uTime * 1.7 + hash12(sp + 3.1) * 40.0));
-    if (hz >= 1.0){ o = vec4(skyc, 0.0); return; }       // alpha: 1 / distance, 0 for the sky
+    if (hz >= 1.0){ o = vec4(skyc, 1.0); return; }
   }
 
   // ---- the surface: fixed-point intersection with the height field ----
@@ -1003,7 +1009,7 @@ void main(){
 
   // the far sea goes behind the same haze as the cloud bank's base, so the two meet at the horizon
   col = mix(col, hazeCol(), HAZE * (1.0 - exp(-dist / ${LOOK.fog.toFixed(1)})));
-  o = vec4(max(mix(col, skyc, hz), 0.0), mix(1.0 / dist, 0.0, hz));
+  o = vec4(max(mix(col, skyc, hz), 0.0), 1.0);
 }`, {
   uSurf: surfRT.texture, uFloor: floorRT.texture, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
   uCam: camera.position, uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uLw: light.lw, uCausK: light.causK, uAmb: light.amb,
@@ -1011,7 +1017,17 @@ void main(){
   uTime: 0, uNight: 0, uPixAng: 0.001
 });
 
-/* ---------- post: bloom pyramid, AgX; no temporal accumulation ---------- */
+/* ---------- post: bloom pyramid, haze and defocus, GT7 tone mapping; no temporal accumulation ---------- */
+// GT7's SDR curve: peak at the 250-nit paper white (2.5 in frame-buffer units), with its shoulder constants and the
+// ICtCp intensity of a 250-nit grey (where chroma starts to fade)
+const GT7 = (() => {
+  const peak = 2.5, alpha = 0.25, lin = 0.444, k = (lin - 1) / (alpha - 1);
+  const ym = Math.pow(peak * 0.01, 0.1593017578125);
+  const targetI = Math.pow(2, 78.84375 * (Math.log2(0.8359375 + 18.8515625 * ym) - Math.log2(1 + 18.6875 * ym)));
+  return { peak, kA: peak * lin + peak * k, kB: -peak * k * Math.exp(lin / k), kC: -1 / (k * peak), targetI };
+})();
+// the haze band's half-heights as s0 (sin elevation): f = 1 - exp(-3 s0 / (|sin e| + s0)) halves at |sin e| = 3.33 s0
+const HZ = { up: Math.sin(LOOK.haze.up * Math.PI / 180) / 3.328, down: Math.sin(LOOK.haze.down * Math.PI / 180) / 3.328 };
 const mBloomDown = shader(`
 uniform sampler2D tIn; uniform vec2 uTexel; uniform int uFirst;
 vec3 s(vec2 d){ return textureLod(tIn, vUv + d * uTexel, 0.0).rgb; }
@@ -1037,52 +1053,119 @@ void main(){
   o = vec4(r / 16.0 + texture(tBase, vUv).rgb, 1.0);
 }`, { tIn: null, tBase: null, uTexel: new THREE.Vector2() });
 const mFinal = shader(`
-uniform sampler2D tHDR, tBloom; uniform float uExposure, uTime, uNight, uBlurPx; uniform int uFrame;
-// the frame blurred by a Gaussian of about 0.6 * 2^lod pixels: its mip level read with a cubic B-spline in four bilinear
-// taps (the grid of the finer level when lod has a fraction). Same cost for any radius; the GPU builds the mips.
-vec3 blurred(vec2 uv, float lod){
-  vec2 ts = vec2(textureSize(tHDR, int(lod))), p = uv * ts - 0.5, f = fract(p); p = floor(p);
+uniform sampler2D tHDR, tBloom; uniform float uExposure, uNight, uBlurPx, uHazeV, uHazeS, uHazeG; uniform int uFrame;
+uniform vec3 uAir; uniform mat3 uCamRot, uGrade; uniform mat4 uInvProj;
+const float HZ_UP = ${HZ.up.toFixed(6)}, HZ_DOWN = ${HZ.down.toFixed(6)};
+// the frame blurred by a Gaussian of about 0.6 * 2^lod pixels: each of the two nearest mip levels read with a cubic
+// B-spline in four bilinear taps, on its own grid, then blended. Same cost for any radius; the GPU builds the mips.
+vec3 bspline(vec2 uv, int lv){
+  vec2 ts = vec2(textureSize(tHDR, lv)), p = uv * ts - 0.5, f = fract(p); p = floor(p);
   vec2 f2 = f * f, f3 = f2 * f;
   vec2 w0 = (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0, w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0;
   vec2 w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0, w3 = f3 / 6.0;
   vec2 g0 = w0 + w1, g1 = w2 + w3, h0 = (w1 / g0 - 0.5 + p) / ts, h1 = (w3 / g1 + 1.5 + p) / ts;
-  return (textureLod(tHDR, h0, lod).rgb * g0.x + textureLod(tHDR, vec2(h1.x, h0.y), lod).rgb * g1.x) * g0.y
-       + (textureLod(tHDR, vec2(h0.x, h1.y), lod).rgb * g0.x + textureLod(tHDR, h1, lod).rgb * g1.x) * g1.y;
+  float l = float(lv);
+  return (textureLod(tHDR, h0, l).rgb * g0.x + textureLod(tHDR, vec2(h1.x, h0.y), l).rgb * g1.x) * g0.y
+       + (textureLod(tHDR, vec2(h0.x, h1.y), l).rgb * g0.x + textureLod(tHDR, h1, l).rgb * g1.x) * g1.y;
+}
+vec3 blurred(vec2 uv, float lod){
+  int l0 = int(lod); float fr = lod - float(l0);
+  if (fr < 0.02) return bspline(uv, l0);
+  if (fr > 0.98) return bspline(uv, l0 + 1);
+  return mix(bspline(uv, l0), bspline(uv, l0 + 1), fr);
 }
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-vec3 agxContrast(vec3 x){ vec3 x2 = x * x, x4 = x2 * x2; return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232; }
-vec3 agx(vec3 v){
-  const mat3 m = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051, 0.0784335999999992, 0.878468636469772, 0.0784336,
-                      0.0792237451477643, 0.0791661274605434, 0.879142973793104);
-  const float mn = -12.47393, mx = 4.026069;
-  v = clamp(log2(max(m * v, 1e-10)), mn, mx);
-  return agxContrast((v - mn) / (mx - mn));
+
+// ---- GT7 tone mapping (Polyphony Digital, SIGGRAPH 2025 course; MIT licence), SDR mode, ICtCp as the uniform
+// colour space. Input: linear Rec.2020, 1.0 = 100 nits. The GT curve (toe, linear mid-tones, shoulder converging on
+// a 250-nit paper white) runs per channel; that result's intensity is kept with the input's chroma (faded out near
+// the peak) and the two are blended 40 / 60. Output: [0, 1] linear Rec.2020. ----
+const float GT_P = ${GT7.peak.toFixed(4)}, GT_MID = 0.538, GT_LIN = 0.444, GT_TOE = 1.28, GT_I = ${GT7.targetI.toFixed(6)};
+const float GT_KA = ${GT7.kA.toFixed(6)}, GT_KB = ${GT7.kB.toFixed(6)}, GT_KC = ${GT7.kC.toFixed(6)};
+float gtCurve(float x){
+  x = max(x, 0.0);
+  return x < GT_LIN * GT_P ? mix(GT_MID * pow(x / GT_MID, GT_TOE), x, smoothstep(0.0, GT_MID, x)) : GT_KA + GT_KB * exp(x * GT_KC);
 }
-vec3 agxLook(vec3 v){ float l = dot(v, vec3(0.2126, 0.7152, 0.0722)); v = pow(max(v, 0.0), vec3(1.38)); return l + ${LOOK.sat.toFixed(3)} * (v - l); }
-vec3 agxOut(vec3 v){
-  const mat3 mi = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438, -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
-                       -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
-  return mi * v;
+float pqInv(float v){   // frame-buffer value to the ST 2084 (PQ) signal
+  float ym = pow(max(v, 0.0) * 0.01, 0.1593017578125);
+  return exp2(78.84375 * (log2(0.8359375 + 18.8515625 * ym) - log2(1.0 + 18.6875 * ym)));
 }
+float pqEotf(float n){  // the PQ signal back to a frame-buffer value
+  float p = pow(clamp(n, 0.0, 1.0), 1.0 / 78.84375);
+  return 100.0 * pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), 1.0 / 0.1593017578125);
+}
+vec3 gt7(vec3 rgb){
+  vec3 p = vec3(pqInv(dot(rgb, vec3(1688.0, 2146.0, 262.0) / 4096.0)), pqInv(dot(rgb, vec3(683.0, 2951.0, 462.0) / 4096.0)),
+                pqInv(dot(rgb, vec3(99.0, 309.0, 3688.0) / 4096.0)));
+  float I = 0.5 * (p.x + p.y);
+  vec2 ct = vec2(dot(p, vec3(6610.0, -13613.0, 7003.0)), dot(p, vec3(17933.0, -17390.0, -543.0))) / 4096.0;
+  vec3 sk = vec3(gtCurve(rgb.r), gtCurve(rgb.g), gtCurve(rgb.b));
+  float skI = 0.5 * (pqInv(dot(sk, vec3(1688.0, 2146.0, 262.0) / 4096.0)) + pqInv(dot(sk, vec3(683.0, 2951.0, 462.0) / 4096.0)));
+  ct *= 1.0 - smoothstep(0.98, 1.16, I / GT_I);
+  vec3 lms = vec3(pqEotf(skI + 0.00860904 * ct.x + 0.11103 * ct.y), pqEotf(skI - 0.00860904 * ct.x - 0.11103 * ct.y),
+                  pqEotf(skI + 0.560031 * ct.x - 0.320627 * ct.y));
+  vec3 sc = max(vec3(dot(lms, vec3(3.43661, -2.50645, 0.0698454)), dot(lms, vec3(-0.79133, 1.9836, -0.192271)),
+                     dot(lms, vec3(-0.0259499, -0.0989137, 1.12486))), 0.0);
+  return min(0.4 * sk + 0.6 * sc, GT_P) / GT_P;
+}
+vec3 rec709to2020(vec3 c){ return vec3(dot(c, vec3(0.6274040, 0.3292820, 0.0433136)), dot(c, vec3(0.0690970, 0.9195400, 0.0113612)), dot(c, vec3(0.0163916, 0.0880132, 0.8955950))); }
+vec3 rec2020to709(vec3 c){ return vec3(dot(c, vec3(1.6604910, -0.5876411, -0.0728499)), dot(c, vec3(-0.1245505, 1.1328999, -0.0083494)), dot(c, vec3(-0.0181508, -0.1005789, 1.1187297))); }
+vec3 srgbOetf(vec3 x){ return mix(12.92 * x, 1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, x)); }
+
 void main(){
   vec2 d = vUv - 0.5;
-  vec3 c = vec3(texture(tHDR, vUv - d * 0.0018).r, texture(tHDR, vUv).g, texture(tHDR, vUv + d * 0.0018).b);
-  // a slightly short-sighted eye: sharp to its far point, then a blur disc that grows with 1 / far - 1 / distance.
-  // A disc of diameter D spreads like a Gaussian of D / 4.
-  float sig = 0.25 * uBlurPx * max(1.0 - texelFetch(tHDR, ivec2(gl_FragCoord.xy), 0).a * ${LOOK.myopia.sharp.toFixed(2)}, 0.0);
+  // The eye's ray through this pixel. With the camera fixed above a flat sea, its elevation is all that the haze
+  // and the defocus depend on.
+  vec4 vp = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
+  float sy = normalize(uCamRot * (vp.xyz / vp.w)).y;                       // sin(elevation)
+  // Haze: the optical depth of a hazy layer seen at this elevation goes as 1 / (sin e + s0), capped at the horizon
+  // (Chapman); s0 sets the band's half-height, narrower below the horizon, where the far sea mirrors the hazy low sky.
+  // The scattered share 1 - exp(-tau) becomes airlight (the veil), a little softening, and a wide forward-scatter glow
+  // around bright things (the bloom pyramid, already read here, weighted up); the rest arrives unscattered.
+  float s0 = sy >= 0.0 ? HZ_UP : HZ_DOWN, f = 1.0 - exp(-3.0 * s0 / (abs(sy) + s0));
+  // Defocus of a slightly short-sighted eye: sharp to its far point, then a disc that grows with 1/far - 1/distance;
+  // a disc of diameter D spreads like a Gaussian of D / 4. The two blurs add in quadrature: one lookup for both.
+  float dof = 0.25 * uBlurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0), hb = uHazeS * f;
+  float sig = sqrt(dof * dof + hb * hb);
+  vec3 c;
   if (sig > 0.6) c = blurred(vUv, log2(sig / 0.6));
-  else if (sig > 0.02) c = mix(c, blurred(vUv, 0.0), sig / 0.6);
-  c += texture(tBloom, vUv).rgb * 0.045;
-  c *= uExposure;
-  c *= mix(1.0, smoothstep(1.25, 0.25, length(d * vec2(1.0, 0.82)) * 1.35), mix(0.35, 0.5, uNight));
-  vec3 t = agxOut(agxLook(agx(c)));
+  else {
+    c = vec3(texture(tHDR, vUv - d * 0.0018).r, texture(tHDR, vUv).g, texture(tHDR, vUv + d * 0.0018).b);
+    if (sig > 0.15) c = mix(c, blurred(vUv, 0.0), sig / 0.6);      // below 0.15 px a blur cannot be seen
+  }
+  c = mix(c, uAir, uHazeV * f);                                            // airlight
+  c += texture(tBloom, vUv).rgb * (0.045 + uHazeG * f);
+  c *= uExposure * mix(1.0, smoothstep(1.25, 0.25, length(d * vec2(1.0, 0.82)) * 1.35), mix(0.35, 0.5, uNight));
+  c = max(uGrade * c, 0.0);                    // grade: chroma scaled and turned about the grey axis; neutrals stay put
+  vec3 t = srgbOetf(clamp(rec2020to709(gt7(rec709to2020(c))), 0.0, 1.0));
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
-}`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uFrame: 0, uBlurPx: 0 });
+}`, { tHDR: null, tBloom: null, uExposure: 1.2, uNight: 0, uFrame: 0, uBlurPx: 0, uHazeV: 0, uHazeS: 0, uHazeG: 0,
+  uAir: new THREE.Vector3(), uGrade: new THREE.Matrix3(), uCamRot: camRot, uInvProj: camera.projectionMatrixInverse });
 
 const hdrRT = rt(1, 1, HALF, { mip: true });   // mipmapped: the defocus reads its levels
 let bloom = [];
+// the airlight: the horizon's haze colour, as the sky shader makes it (horizonCol * 1.12, times the sky's brightness)
+const airDay = new THREE.Vector3(), airNight = new THREE.Vector3(0.010, 0.029, 0.050);
+function airlight(n){
+  const t = Math.min(Math.max((light.sun.value.y + 0.02) / 0.37, 0), 1), w = t * t * (3 - 2 * t);
+  airDay.set(0.520 + 0.020 * w, 0.300 + 0.490 * w, 0.160 + 0.820 * w);
+  return mFinal.uniforms.uAir.value.copy(airDay).lerp(airNight, n).multiplyScalar(1.12 * (LOOK.sky + (0.85 - LOOK.sky) * n));
+}
+// the grade as one matrix on linear RGB: to (Y, B - Y, R - Y), chroma scaled by s and turned by h, and back
+function grade(n){
+  const s = LOOK.grade.sat[0] + (LOOK.grade.sat[1] - LOOK.grade.sat[0]) * n;
+  const h = (LOOK.grade.hue[0] + (LOOK.grade.hue[1] - LOOK.grade.hue[0]) * n) * Math.PI / 180;
+  const A = [[0.2126, 0.7152, 0.0722], [-0.2126, -0.7152, 0.9278], [0.7874, -0.7152, -0.0722]];
+  const B = [[1, 0, 1], [1, -0.0722 / 0.7152, -0.2126 / 0.7152], [1, 1, 0]];                     // inverse of A
+  const R = [[1, 0, 0], [0, s * Math.cos(h), -s * Math.sin(h)], [0, s * Math.sin(h), s * Math.cos(h)]];
+  const mul = (X, Z) => X.map(r => [0, 1, 2].map(j => r[0] * Z[0][j] + r[1] * Z[1][j] + r[2] * Z[2][j]));
+  const M = mul(mul(B, R), A);
+  mFinal.uniforms.uGrade.value.set(...M[0], ...M[1], ...M[2]);
+}
 function post(n, frameNo){
+  airlight(n);
+  grade(n);
   for (let i = 0; i < bloom.length; i++){
     const src = i === 0 ? hdrRT : bloom[i - 1].d;
     mBloomDown.uniforms.uTexel.value.set(1 / src.width, 1 / src.height);
@@ -1095,7 +1178,10 @@ function post(n, frameNo){
   }
   draw(mFinal, null, { tHDR: hdrRT.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
     uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo,
-    uBlurPx: LOOK.myopia.blur * Math.PI / 180 / mWater.uniforms.uPixAng.value * (1 + (LOOK.myopia.night - 1) * n) });
+    uBlurPx: LOOK.myopia.blur * Math.PI / 180 / mWater.uniforms.uPixAng.value * (1 + (LOOK.myopia.night - 1) * n),
+    uHazeV: LOOK.haze.veil[0] + (LOOK.haze.veil[1] - LOOK.haze.veil[0]) * n,
+    uHazeS: LOOK.haze.blur[0] + (LOOK.haze.blur[1] - LOOK.haze.blur[0]) * n,
+    uHazeG: LOOK.haze.glow[0] + (LOOK.haze.glow[1] - LOOK.haze.glow[0]) * n });
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
