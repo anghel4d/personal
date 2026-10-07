@@ -1436,7 +1436,11 @@ void main(){
   if (sig > 0.6) c = blurred(vUv, log2(sig / 0.6));
   else {
     vec2 ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                         // only a gentle colour fringe on the moon the eye looks at
-    c = vec3(texture(tHDR, vUv - ca).r, texture(tHDR, vUv).g, texture(tHDR, vUv + ca).b);
+    vec3 c0 = texture(tHDR, vUv).rgb;
+    c = vec3(texture(tHDR, vUv - ca).r, c0.g, texture(tHDR, vUv + ca).b);
+    // a shifted channel stays within 1.6x of the pixel's own: soft edges keep their fringe, a blown highlight's edge
+    // does not turn violet
+    c = vec3(clamp(c.r, c0.r / 1.6 - 0.01, c0.r * 1.6 + 0.01), c.g, clamp(c.b, c0.b / 1.6 - 0.01, c0.b * 1.6 + 0.01));
     if (sig > 0.15) c = mix(c, blurred(vUv, 0.0), sig / 0.6);      // below 0.15 px a blur cannot be seen
   }
   c = mix(c, uAir, uHazeV * f);                                            // airlight
@@ -2325,7 +2329,11 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   if (sig > 0.6) { c = blurred(i.uv, log2(sig / 0.6)); }
   else {
     let ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                           // only a gentle colour fringe on the moon the eye looks at
-    c = vec3f(textureSampleLevel(tHDR, sClamp, i.uv - ca, 0.0).r, textureSampleLevel(tHDR, sClamp, i.uv, 0.0).g, textureSampleLevel(tHDR, sClamp, i.uv + ca, 0.0).b);
+    let c0 = textureSampleLevel(tHDR, sClamp, i.uv, 0.0).rgb;
+    c = vec3f(textureSampleLevel(tHDR, sClamp, i.uv - ca, 0.0).r, c0.g, textureSampleLevel(tHDR, sClamp, i.uv + ca, 0.0).b);
+    // a shifted channel stays within 1.6x of the pixel's own: soft edges keep their fringe, a blown highlight's edge
+    // does not turn violet
+    c = vec3f(clamp(c.r, c0.r / 1.6 - 0.01, c0.r * 1.6 + 0.01), c.g, clamp(c.b, c0.b / 1.6 - 0.01, c0.b * 1.6 + 0.01));
     if (sig > 0.15) { c = mix(c, blurred(i.uv, 0.0), sig / 0.6); }
   }
   c = mix(c, F.air, F.hazeV * f);
