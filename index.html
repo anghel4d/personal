@@ -461,6 +461,8 @@ const LOOK = {
   facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
   exposure: 1.3, sat: 1.8,
+  myopia: { sharp: 3, blur: 0.3, night: 1.4 }, // slightly short-sighted eye: sharp to 3 m, then a defocus that grows to
+                                               // 0.3 degrees across at the horizon; the dilated night pupil adds 40%
   speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
 };
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
@@ -912,7 +914,7 @@ void main(){
     vec2 sp = floor(gl_FragCoord.xy / 1.5 + vec2(11.0, 7.0));
     float st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += uNight * st * 0.2 * (0.65 + 0.35 * sin(uTime * 1.7 + hash12(sp + 3.1) * 40.0));
-    if (hz >= 1.0){ o = vec4(skyc, 1.0); return; }
+    if (hz >= 1.0){ o = vec4(skyc, 0.0); return; }       // alpha: 1 / distance, 0 for the sky
   }
 
   // ---- the surface: fixed-point intersection with the height field ----
@@ -1001,7 +1003,7 @@ void main(){
 
   // the far sea goes behind the same haze as the cloud bank's base, so the two meet at the horizon
   col = mix(col, hazeCol(), HAZE * (1.0 - exp(-dist / ${LOOK.fog.toFixed(1)})));
-  o = vec4(max(mix(col, skyc, hz), 0.0), 1.0);
+  o = vec4(max(mix(col, skyc, hz), 0.0), mix(1.0 / dist, 0.0, hz));
 }`, {
   uSurf: surfRT.texture, uFloor: floorRT.texture, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
   uCam: camera.position, uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uLw: light.lw, uCausK: light.causK, uAmb: light.amb,
@@ -1012,7 +1014,7 @@ void main(){
 /* ---------- post: bloom pyramid, AgX; no temporal accumulation ---------- */
 const mBloomDown = shader(`
 uniform sampler2D tIn; uniform vec2 uTexel; uniform int uFirst;
-vec3 s(vec2 d){ return texture(tIn, vUv + d * uTexel).rgb; }
+vec3 s(vec2 d){ return textureLod(tIn, vUv + d * uTexel, 0.0).rgb; }
 float kw(vec3 c){ return 1.0 / (1.0 + dot(c, vec3(0.2126, 0.7152, 0.0722))); }
 void main(){
   vec3 a = s(vec2(-2, 2)), b = s(vec2(0, 2)), c = s(vec2(2, 2)), d = s(vec2(-2, 0)), e = s(vec2(0, 0)), f = s(vec2(2, 0));
@@ -1035,7 +1037,18 @@ void main(){
   o = vec4(r / 16.0 + texture(tBase, vUv).rgb, 1.0);
 }`, { tIn: null, tBase: null, uTexel: new THREE.Vector2() });
 const mFinal = shader(`
-uniform sampler2D tHDR, tBloom; uniform float uExposure, uTime, uNight; uniform int uFrame;
+uniform sampler2D tHDR, tBloom; uniform float uExposure, uTime, uNight, uBlurPx; uniform int uFrame;
+// the frame blurred by a Gaussian of about 0.6 * 2^lod pixels: its mip level read with a cubic B-spline in four bilinear
+// taps (the grid of the finer level when lod has a fraction). Same cost for any radius; the GPU builds the mips.
+vec3 blurred(vec2 uv, float lod){
+  vec2 ts = vec2(textureSize(tHDR, int(lod))), p = uv * ts - 0.5, f = fract(p); p = floor(p);
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0, w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0;
+  vec2 w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0, w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1, g1 = w2 + w3, h0 = (w1 / g0 - 0.5 + p) / ts, h1 = (w3 / g1 + 1.5 + p) / ts;
+  return (textureLod(tHDR, h0, lod).rgb * g0.x + textureLod(tHDR, vec2(h1.x, h0.y), lod).rgb * g1.x) * g0.y
+       + (textureLod(tHDR, vec2(h0.x, h1.y), lod).rgb * g0.x + textureLod(tHDR, h1, lod).rgb * g1.x) * g1.y;
+}
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec3 agxContrast(vec3 x){ vec3 x2 = x * x, x4 = x2 * x2; return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232; }
 vec3 agx(vec3 v){
@@ -1054,15 +1067,20 @@ vec3 agxOut(vec3 v){
 void main(){
   vec2 d = vUv - 0.5;
   vec3 c = vec3(texture(tHDR, vUv - d * 0.0018).r, texture(tHDR, vUv).g, texture(tHDR, vUv + d * 0.0018).b);
+  // a slightly short-sighted eye: sharp to its far point, then a blur disc that grows with 1 / far - 1 / distance.
+  // A disc of diameter D spreads like a Gaussian of D / 4.
+  float sig = 0.25 * uBlurPx * max(1.0 - texelFetch(tHDR, ivec2(gl_FragCoord.xy), 0).a * ${LOOK.myopia.sharp.toFixed(2)}, 0.0);
+  if (sig > 0.6) c = blurred(vUv, log2(sig / 0.6));
+  else if (sig > 0.02) c = mix(c, blurred(vUv, 0.0), sig / 0.6);
   c += texture(tBloom, vUv).rgb * 0.045;
   c *= uExposure;
   c *= mix(1.0, smoothstep(1.25, 0.25, length(d * vec2(1.0, 0.82)) * 1.35), mix(0.35, 0.5, uNight));
   vec3 t = agxOut(agxLook(agx(c)));
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
-}`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uFrame: 0 });
+}`, { tHDR: null, tBloom: null, uExposure: 1.2, uTime: 0, uNight: 0, uFrame: 0, uBlurPx: 0 });
 
-const hdrRT = rt(1, 1, HALF);
+const hdrRT = rt(1, 1, HALF, { mip: true });   // mipmapped: the defocus reads its levels
 let bloom = [];
 function post(n, frameNo){
   for (let i = 0; i < bloom.length; i++){
@@ -1076,7 +1094,8 @@ function post(n, frameNo){
     draw(mBloomUp, bloom[i].u, { tIn: (i === bloom.length - 2 ? lo.d : lo.u).texture, tBase: bloom[i].d.texture });
   }
   draw(mFinal, null, { tHDR: hdrRT.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
-    uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo });
+    uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo,
+    uBlurPx: LOOK.myopia.blur * Math.PI / 180 / mWater.uniforms.uPixAng.value * (1 + (LOOK.myopia.night - 1) * n) });
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
