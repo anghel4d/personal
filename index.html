@@ -122,6 +122,16 @@ nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-
 .panel .try{margin:.75em 0 0;padding:.7em 0 .1em;border-top:1px dotted var(--rule);font-style:italic}
 .panel .earlier{margin-top:1.6em;color:var(--ink-soft)}
 .panel blockquote{margin:1.6em 0;padding:0 0 0 1.1em;border-left:1px solid var(--ink);font-style:italic;font-size:1.06em;line-height:1.55}
+.panel .tabs{display:flex;flex-wrap:wrap;gap:4px 26px;margin:-.35em 0 1.7em;padding-bottom:.55em;border-bottom:1px solid var(--rule);
+  font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;text-transform:lowercase}
+.panel .tabs button{font:inherit;color:inherit;background:none;border:0;padding:10px 0;margin:-10px 0;min-height:44px;cursor:pointer;
+  text-transform:inherit;display:inline-flex;align-items:center}
+.panel .tabs [aria-selected="true"]{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:6px}
+.panel .tabs [aria-disabled="true"]{color:var(--ink-soft);opacity:.5;cursor:default}
+.panel .posts{list-style:none;margin:0;padding:0}
+.panel .posts li{padding:1.15em 0 1.25em;border-top:1px solid var(--rule)}
+.panel .posts li:first-child{border-top:0;padding-top:0}
+.panel .empty{color:var(--ink-soft);font-style:italic}
 .panel .contact a{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:5px;text-decoration-color:var(--rule)}
 .panel .contact a:hover{text-decoration-color:currentColor}
 .panel .contact .big{font-style:italic;font-size:clamp(26px,3vw,38px);font-variation-settings:"opsz" 60;font-weight:300;display:inline-block;margin:.2em 0 .6em}
@@ -190,6 +200,7 @@ body,.chrome,.statement{transition:color 1.2s ease}
   <div class="inner">
     <a href="#work" data-go="work" data-i18n="work">Work</a>
     <a href="#about" data-go="about" data-i18n="about">About</a>
+    <a href="#blog" data-go="blog" data-i18n="blog">Blog</a>
     <a href="#contact" data-go="contact" data-i18n="contact">Contact</a>
     <div class="ext">
       <a href="https://github.com/anghel4d" rel="noopener" target="_blank">github</a>
@@ -201,6 +212,7 @@ body,.chrome,.statement{transition:color 1.2s ease}
 
 <section class="layer panel" id="work" aria-labelledby="workH"><div class="inner"></div></section>
 <section class="layer panel" id="about" aria-labelledby="aboutH"><div class="inner"></div></section>
+<section class="layer panel" id="blog" aria-labelledby="blogH"><div class="inner"></div></section>
 <section class="layer panel" id="contact" aria-labelledby="contactH"><div class="inner"></div></section>
 
 <div class="chrome diag-btn" id="diagCtl" hidden><button id="diagBtn" aria-expanded="true" aria-controls="diag" data-i18n="diag">diag</button></div>
@@ -222,7 +234,7 @@ en:{
   menu:"menu", close:"close", day:"day", night:"night",
   diag:"diag", diagLabel:"Diagnostics", diagText:"Diagnostics as text", diagCopy:"copy", diagCopied:"copied",
   diagLive:"live, every second", diagBlocked:"copy blocked here; text selected below",
-  work:"Work", about:"About", contact:"Contact", next:"next",
+  work:"Work", about:"About", blog:"Blog", contact:"Contact", next:"next",
   statement:'Matei Anghel is a goated vibe coder and you should probably <a href="#work" data-go="work">hire him</a>.',
   workH:"Work",
   items:[
@@ -247,6 +259,10 @@ en:{
   ],
   stance:"There’s no excuse. A professional technologist in the age of AI must stay current, just as a lawyer keeps up with case law, a doctor with global health, and a security professional with the threat landscape. As a professional software maker, I hold myself to that standard and spend my free time keeping myself up to date.",
   noted:"Named on Jane Street’s puzzle leaderboard for February through April 2025, and top 25 at NorthSec CTF 2023.",
+  blogH:"Blog",
+  // the blog's tabs, in order; those without "open" are greyed out. A koan: {h: title, p: [paragraphs]}
+  tabs:[{id:"technical", t:"Technical"}, {id:"culture", t:"Culture"}, {id:"koans", t:"Singularity Koans", open:true}],
+  koans:[], koansEmpty:"The first koans are on their way.",
   contactH:"Contact",
   contactLead:"The fastest way to reach me is email.",
   contactRest:'Code lives on <a href="https://github.com/anghel4d" target="_blank" rel="noopener">GitHub</a>, and I am <a href="https://x.com/pyrusdotc" target="_blank" rel="noopener">@pyrusdotc</a> on X.'
@@ -255,7 +271,7 @@ fr:{
   menu:"menu", close:"fermer", day:"jour", night:"nuit",
   diag:"diag", diagLabel:"Diagnostic", diagText:"Diagnostic en texte", diagCopy:"copier", diagCopied:"copié",
   diagLive:"en direct, chaque seconde", diagBlocked:"copie bloquée ici ; texte sélectionné ci-dessous",
-  work:"Travaux", about:"À propos", contact:"Contact", next:"suivant",
+  work:"Travaux", about:"À propos", blog:"Blog", contact:"Contact", next:"suivant",
   statement:'Matei Anghel est un vibe coder hors pair, et vous devriez probablement <a href="#work" data-go="work">l’embaucher</a>.',
   workH:"Travaux",
   items:[
@@ -280,13 +296,16 @@ fr:{
   ],
   stance:"Il n’y a pas d’excuse. Un technologue professionnel à l’ère de l’IA doit rester à jour, comme un avocat suit la jurisprudence, un médecin la santé mondiale et un professionnel de la sécurité le paysage des menaces. En tant que créateur de logiciels professionnel, je m’impose cette exigence et je consacre mon temps libre à me tenir à jour.",
   noted:"Classé au tableau des solveurs des énigmes de Jane Street de février à avril 2025, et dans le top 25 du CTF NorthSec 2023.",
+  blogH:"Blog",
+  tabs:[{id:"technical", t:"Technique"}, {id:"culture", t:"Culture"}, {id:"koans", t:"Koans de la singularité", open:true}],
+  koans:[], koansEmpty:"Les premiers koans arrivent.",
   contactH:"Contact",
   contactLead:"Le plus rapide pour me joindre, c’est le courriel.",
   contactRest:'Mon code est sur <a href="https://github.com/anghel4d" target="_blank" rel="noopener">GitHub</a>, et je suis <a href="https://x.com/pyrusdotc" target="_blank" rel="noopener">@pyrusdotc</a> sur X.'
 }};
 
 const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let lang = "en";
+let lang = "en", blogTab = "koans";
 function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 function load(k){try{return localStorage.getItem(k)}catch(e){return null}}
 
@@ -306,6 +325,16 @@ function render(){
   document.querySelector("#about .inner").innerHTML =
     `<h1 id="aboutH">${esc(t.aboutH)}</h1>` + t.aboutP.map(p => `<p>${esc(p)}</p>`).join("") +
     `<blockquote>${esc(t.stance)}</blockquote><p>${esc(t.noted)}</p>`;
+  const tab = t.tabs.find(x => x.id === blogTab && x.open) || t.tabs.find(x => x.open);
+  document.querySelector("#blog .inner").innerHTML =
+    `<h1 id="blogH">${esc(t.blogH)}</h1><div class="tabs" role="tablist" aria-labelledby="blogH">` +
+    t.tabs.map(x => `<button type="button" role="tab" id="tab-${x.id}" data-tab="${x.id}" aria-controls="tabpanel"` +
+      (x.open ? ` aria-selected="${x === tab}" tabindex="${x === tab ? 0 : -1}"` : ` aria-selected="false" aria-disabled="true" tabindex="-1"`) +
+      `>${esc(x.t)}</button>`).join("") +
+    `</div><div role="tabpanel" id="tabpanel" aria-labelledby="tab-${tab.id}">` +
+    (t[tab.id] && t[tab.id].length
+      ? `<ol class="posts">${t[tab.id].map(k => `<li><h2>${esc(k.h)}</h2>${k.p.map(p => `<p>${esc(p)}</p>`).join("")}</li>`).join("")}</ol>`
+      : `<p class="empty">${esc(t[tab.id + "Empty"] || "")}</p>`) + `</div>`;
   document.querySelector("#contact .inner").innerHTML =
     `<h1 id="contactH">${esc(t.contactH)}</h1><div class="contact"><p>${esc(t.contactLead)}</p>
      <a class="big" href="mailto:matei3d@gmail.com">matei3d@gmail.com</a><p>${t.contactRest}</p></div>`;
@@ -317,7 +346,7 @@ function render(){
 const body = document.body, menuBtn = document.getElementById("menuBtn");
 let current = "home";
 function show(id){
-  const layers = ["menu","work","about","contact"];
+  const layers = ["menu","work","about","blog","contact"];
   layers.forEach(l => { const el = document.getElementById(l); el.classList.remove("shown"); el.classList.remove("on"); });
   if (typeof pzReset === "function" && !breaking) pzReset();
   current = id; S.open = id !== "home";
@@ -342,15 +371,20 @@ document.addEventListener("click", e => {
 menuBtn.addEventListener("click", () => go(current === "home" ? "menu" : "home"));
 document.getElementById("veil").addEventListener("click", () => go("home"));
 document.addEventListener("keydown", e => { if (e.key === "Escape" && current !== "home") go("home"); });
-window.addEventListener("popstate", () => { const h = location.hash.slice(1); show(["work","about","contact","menu"].includes(h) ? h : "home"); });
+window.addEventListener("popstate", () => { const h = location.hash.slice(1); show(["work","about","blog","contact","menu"].includes(h) ? h : "home"); });
+// the blog's tabs: a greyed-out tab does nothing
+document.getElementById("blog").addEventListener("click", e => {
+  const b = e.target.closest("[data-tab]"); if (!b || b.getAttribute("aria-disabled") === "true" || b.dataset.tab === blogTab) return;
+  blogTab = b.dataset.tab; render(); document.getElementById("tab-" + blogTab).focus();
+});
 document.querySelectorAll("[data-lang]").forEach(b => b.addEventListener("click", () => { lang = b.dataset.lang; store("a4d-lang", lang); render(); }));
 
 /* ---------------- poise: past a panel's end, the next one ----------------
-   At the bottom of Work or About, scrolling on (wheel, a drag up, or Page Down, Space, the down arrow) loads a hairline
+   At the bottom of Work, About or Blog, scrolling on (wheel, a drag up, or Page Down, Space, the down arrow) loads a hairline
    gauge under "next · about", and the panel leans up a little. It drains as soon as the scrolling stops. Full, it
    breaks: the panel lifts away and the next one rises in from below. It arms only on a fresh gesture at the end, so
    the momentum of the scroll that reached the end cannot fill it. */
-const NEXT = { work: "about", about: "contact" };
+const NEXT = { work: "about", about: "blog", blog: "contact" };
 const poise = document.getElementById("poise"), poiseFill = poise.querySelector("i"), poiseLabel = poise.querySelector("span");
 let pz = 0, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = false, touch = null, breaking = false;
 const layerOf = () => document.getElementById(current);
@@ -426,7 +460,7 @@ document.getElementById("themeBtn").addEventListener("click", () => { mode = mod
 lang = load("a4d-lang") === "fr" ? "fr" : (navigator.language || "").toLowerCase().startsWith("fr") && !load("a4d-lang") ? "fr" : "en";
 applyTheme(); S.night = S.targetNight;
 render();
-const h0 = location.hash.slice(1); if (["work","about","contact","menu"].includes(h0)) show(h0);
+const h0 = location.hash.slice(1); if (["work","about","blog","contact","menu"].includes(h0)) show(h0);
 // the first view comes up as soon as the statement's face is decoded (it is inside the page; 300 ms at most). The
 // scene, and the menu's and panels' faces, start only after it is up, so nothing competes with it.
 window.A4D_SHOWN = new Promise(done => {
@@ -2409,7 +2443,7 @@ const h0 = upload(H0_DATA, N), h0s = upload(H0S_DATA, N2);
 const lines = device.createBuffer({ size: N * N * 16, usage: BU.STORAGE }), lines2 = device.createBuffer({ size: N2 * N2 * 16, usage: BU.STORAGE });
 const disp = tex(N, N, HDR, STORE), surf = tex(N, N, HDR, STORE, mipsOf(N, N)), surf2 = tex(N2, N2, HDR, STORE, mipsOf(N2, N2));
 // mip chains hold only the levels the shaders read: the water reads the bed map to level 6, the volume the slices'
-// level 3, and the final pass the HDR frame's to level 5 at most (HDR_LEVELS)
+// level 3, and the final pass the HDR frame's to about level 5 (HDR_LEVELS keeps one more; the pass clamps to it)
 const floorT = tex(FLOOR_RES, FLOOR_RES, HDR, TARGET, 7);
 const sliceT = [0, 1].map(() => tex(SLICE_RES, SLICE_RES, HDR, TARGET, 4));
 const envT = tex(ENV_W, ENV_H, HDR, TARGET, mipsOf(ENV_W, ENV_H));
