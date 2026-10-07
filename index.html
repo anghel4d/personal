@@ -149,7 +149,6 @@ body,.chrome,.statement{transition:color 1.2s ease}
 .statement{text-shadow:0 0 34px rgba(230,240,244,.55)}
 :root[data-theme="dark"] .statement{text-shadow:0 0 30px rgba(4,19,29,.55)}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
 </head>
 
 <body>
@@ -363,14 +362,210 @@ requestAnimationFrame(() => setTimeout(() => body.classList.add("ready"), 60));
 
 </script>
 <script>
-/* ================= the lagoon: three.js =================
+/* ================= the lagoon: what both renderers share =================
+   The tunables, the sea's spectra and their slope statistics, the noise tables and the framing, as plain data. The
+   WebGPU renderer and the three.js one (the fallback) take what they need from LAGOON, so there is one of each. */
+const LAGOON = (() => {
+/* ---------- the look, in one place ---------- */
+const LOOK = {
+  dbed: 1.1,                                   // depth of the sand bed in front of the viewer (m); it shelves away with distance
+  sea: 0.42, chop: 0.85,                       // sea state and choppiness
+  swell: { height: 0.08, length: 12, dir: 1.6, from: 10, to: 20 },   // the open sea's longer waves beyond the calm lagoon:
+                                               // rms height (m), peak wavelength (m), heading (rad; 1.6 rolls in toward the
+                                               // viewer, crests along the horizon), blended in between these distances (m)
+  tiling: { from: 8, to: 11, cell: 4.2, turn: 20 },   // stochastic tiling of the chop's patch: blended in between these
+                                               // distances (m), hexagonal cells this wide (m), turned within +-turn degrees
+  sigA: [0.75, 0.11, 0.045],                   // absorption per metre: red goes first, then green
+  sigS: [0.012, 0.02, 0.035],                  // scattering per metre: the particles that turn deep water blue
+  god: 1.7,                                    // how far the light shafts stand out from their local average
+  amb: 0.35,                                   // ambient light under water
+  sandLo: [0.78, 0.80, 0.78], sandHi: [0.93, 0.94, 0.91],
+  shelf: 0.45,                                 // how fast the bed falls away with distance (m per m)
+  fog: 250,                                    // distance over which the far sea goes behind the horizon haze (m)
+  sun: [55, 30],                               // elevation, azimuth (degrees, positive to the right)
+  glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
+  capillary: 0.003,                            // slope variance per axis of ripples finer than the FFT (Cox and Munk give
+                                               // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
+  facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
+  sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
+  exposure: 1.5,                               // scene to GT7 frame-buffer units (1.0 = 100 nits)
+  grade: { sat: [1.35, 2.4], hue: [0, 15] },   // before tone mapping, day and night: saturation, and a turn of the
+                                               // colours (degrees) that brings the night's blues to royal blue
+  myopia: { sharp: 3, blur: 0.3, night: 1.4 }, // slightly short-sighted eye: sharp to 3 m, then a defocus that grows to
+                                               // 0.3 degrees across at the horizon; the dilated night pupil adds 40%
+  haze: { veil: [0.35, 0.15], blur: [1.5, 0.8], glow: [0.05, 0.03], up: 3, down: 1 },   // around the horizon, day and
+                                               // night: airlight veil, softening (px) and forward-scatter glow at the
+                                               // horizon; the band's half-heights above and below it (degrees)
+  speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
+};
+/* ---------- the sea: a JONSWAP spectrum with a cross swell, choppy FFT over a 4.2 m patch ---------- */
+const N = 256;
+const L = 4.2;                   // patch size (m)
+const DBED = LOOK.dbed;
+const SEA = LOOK.sea, CHOP = LOOK.chop;
+const RMS = 0.003 + SEA * SEA * 0.07 + SEA * 0.012, CHOPK = CHOP * (0.3 + 0.5 * SEA);
+const LOOP = 120;                // dispersion is quantised so the surface repeats every 2 minutes
+const DVOL = 3.0;                // depth spanned by the caustic slices (m)
+function mulberry(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function gauss(r){ let u = 0; while (!u) u = r(); const v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function genSpectrum(){
+  const r = mulberry(7), windDir = 0.65, peak = 1.25, swell = 0.4, spread = 0.35;
+  const re = new Float32Array(N * N), im = new Float32Array(N * N);
+  const kp = 2 * Math.PI / peak, kp2 = 2 * Math.PI / (peak * 1.9), cutoff = (L / N) * 1.6, dk = 2 * Math.PI / L;
+  const jon = (k, kpk) => { const s = k < kpk ? 0.07 : 0.09; return Math.pow(k, -4) * Math.exp(-1.25 * (kpk / k) ** 2) * Math.pow(3.3, Math.exp(-((k - kpk) ** 2) / (2 * s * s * kpk * kpk))); };
+  const dirF = (th, dir, sharp) => Math.pow(Math.abs(Math.cos((th - dir) * 0.5)), sharp);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
+    const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N, idx = j * N + i;
+    if (mx === 0 && mz === 0) continue;
+    const kx = mx * dk, kz = mz * dk, k = Math.hypot(kx, kz), th = Math.atan2(kz, kx);
+    const D = (1 - spread) * dirF(th, windDir, 12) * 1.9 + spread * 0.32, D2 = dirF(th, windDir + 1.1, 20) * 2.2;
+    const P = (jon(k, kp) * D + swell * jon(k, kp2) * D2 + 0.06 * Math.pow(k, -3.2) * spread) * Math.exp(-((k * cutoff) ** 2)) * dk * dk;
+    const a = Math.sqrt(P * 0.5);
+    re[idx] = gauss(r) * a; im[idx] = gauss(r) * a;
+  }
+  return spectrumData(re, im, N, L);
+}
+// a spectrum as texels of h0(k) and conj(h0(-k)), normalised to unit height variance, with its slope statistics
+function spectrumData(re, im, N, L, exact = false){
+  const dk = 2 * Math.PI / L;
+  let variance = 0;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
+    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
+    variance += re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m];
+  }
+  const sc = 1 / Math.sqrt(Math.max(variance, 1e-20)), data = new Float32Array(N * N * 4);
+  // slope statistics of this sea, for shading what the filtered map stops resolving with distance: the covariance of
+  // the slopes (central differences, as the slope pass takes them, or exact) and how their variance spreads over wavenumber
+  const dl = L / N, hist = new Float64Array(160); let sxx = 0, sxz = 0, szz = 0;   // bin b: k = 2^(b/12 - 4)
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
+    const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N;
+    if (mx === -N / 2 || mz === -N / 2 || (mx === 0 && mz === 0)) continue;
+    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
+    const pw = (re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m]) * sc * sc;
+    const gx = exact ? mx * dk : Math.sin(mx * dk * dl) / dl, gz = exact ? mz * dk : Math.sin(mz * dk * dl) / dl;
+    sxx += pw * gx * gx; sxz += pw * gx * gz; szz += pw * gz * gz;
+    hist[Math.max(0, Math.min(159, Math.round((Math.log2(Math.hypot(mx, mz) * dk) + 4) * 12)))] += pw * (gx * gx + gz * gz);
+  }
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
+    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
+    data[idx * 4] = re[idx] * sc; data[idx * 4 + 1] = im[idx] * sc; data[idx * 4 + 2] = re[m] * sc; data[idx * 4 + 3] = -im[m] * sc;
+  }
+  return { data, userData: { sxx, sxz, szz, hist } };
+}
+const H0_DATA = genSpectrum();
+// how a Gaussian filter of width w removes a spectrum's slope variance: x^p / (1 + x^p) with x = w / s50 (s50 removes
+// half; p, fitted, is 1.65 for the chop and steeper for the narrower swell), the share gone at the finest footprint
+// (floor texels wide) by that curve, g0, and exactly, lost0
+function lossCurve(hist, texel, floor = 0.8){
+  const tot = hist.reduce((x, v) => x + v, 0);
+  const lost = w => 1 - hist.reduce((x, v, b) => x + v * Math.exp(-0.5 * (2 ** (b / 12 - 4) * w) ** 2), 0) / tot;
+  let lo = 1e-4, hi = 100;
+  for (let i = 0; i < 56; i++){ const mid = Math.sqrt(lo * hi); if (lost(mid) < 0.5) lo = mid; else hi = mid; }
+  const s50 = Math.sqrt(lo * hi);
+  let p = 1.65, best = Infinity;
+  for (let q = 0.8; q <= 4.001; q += 0.05){
+    let e = 0;
+    for (let i = -40; i <= 40; i++){ const x = 2 ** (i / 10 * q); e += (lost(s50 * 2 ** (i / 10)) - x / (1 + x)) ** 2; }
+    if (e < best){ best = e; p = q; }
+  }
+  const x0 = Math.pow(floor * texel / s50, p);
+  return { s50, p, g0: x0 / (1 + x0), lost0: lost(floor * texel) };
+}
+// The slopes the shading can count on: the patch plus its rotated, larger copy, scaled to world heights, times the share
+// of the spectrum's slope variance that the choppy inversion and the B-spline keep at the finest footprint (0.72,
+// measured). s50 is the width of a Gaussian filter that removes half of it.
+const SLOPE = (() => {
+  const { sxx, sxz, szz, hist } = H0_DATA.userData, k = RMS * RMS * 0.72, wb = 0.22;
+  const R = [[0.8, -0.6], [0.6, 0.8]], M = [[sxx, sxz], [sxz, szz]], C = [[0, 0], [0, 0]];   // R = transpose(SW)
+  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let p = 0; p < 2; p++) for (let q = 0; q < 2; q++) C[a][b] += R[a][p] * M[p][q] * R[b][q];
+  const cov = [k * (sxx + wb * wb * C[0][0]), k * (sxz + wb * wb * C[0][1]), k * (szz + wb * wb * C[1][1])];
+  return { cov, ...lossCurve(hist, L / N) };
+})();
+
+/* ---------- the swell: the open sea's longer waves, composed with the chop far out ----------
+   It is seen only from LOOK.swell.from on, where a pixel spans decimetres along the view, so it can be coarse: a 32 x 32
+   FFT over 61.4 m (14.6 times the chop's patch, so the two never share a period), waves from 8 m up (four texels each
+   at the least), a swell peaked at LOOK.swell.length with a narrow spread, rolling in toward the viewer so that far out
+   its crests lie along the horizon. Only its slopes are used, taken exactly in the spectrum (i k h), so one FFT gives
+   both and no slope pass is needed. */
+const N2 = 32, L2 = 61.44;
+const H0S_DATA = (() => {
+  const r = mulberry(11), dk = 2 * Math.PI / L2, kp = 2 * Math.PI / LOOK.swell.length, kcut = 2 * Math.PI / 8;
+  const re = new Float32Array(N2 * N2), im = new Float32Array(N2 * N2);
+  for (let j = 0; j < N2; j++) for (let i = 0; i < N2; i++){
+    const mx = i < N2 / 2 ? i : i - N2, mz = j < N2 / 2 ? j : j - N2, idx = j * N2 + i;
+    const k = Math.hypot(mx, mz) * dk, th = Math.atan2(mz, mx);
+    if (k === 0 || k > kcut) continue;
+    const sg = k < kp ? 0.07 : 0.09;
+    const P = Math.pow(k, -4) * Math.exp(-1.25 * (kp / k) ** 2) * Math.pow(3.3, Math.exp(-((k - kp) ** 2) / (2 * sg * sg * kp * kp)))
+            * Math.pow(Math.abs(Math.cos((th - LOOK.swell.dir) * 0.5)), 24) * dk * dk;
+    const a = Math.sqrt(P * 0.5);
+    re[idx] = gauss(r) * a; im[idx] = gauss(r) * a;
+  }
+  return spectrumData(re, im, N2, L2, true);
+})();
+// its slopes, less what bilinear filtering of the finest level takes (a filter 0.41 texel wide)
+const SLOPE2 = (() => {
+  const { sxx, sxz, szz, hist } = H0S_DATA.userData, c = lossCurve(hist, L2 / N2, 0.41), k = LOOK.swell.height ** 2 * (1 - c.lost0);
+  return { cov: [k * sxx, k * sxz, k * szz], ...c };
+})();
+
+// caustic maps, environment map, noise lattice
+const FLOOR_RES = 1024;
+const CAUS_EDGE = { floor: 24, slice: 24 };   // the window's margin in cells: room for the slopes' spread of the light (a low moon spreads it most)
+const SLICES = 8, SLICE_RES = 256;
+const ENV_W = 512, ENV_H = 256;
+const HASH_O = [-224, -260], HASH_W = 448, HASH_H = 304;      // lattice cells x from -224, z from -260
+const NOISE_N = 256;
+const NOISE_DATA = (() => {
+  const r = mulberry(5), R = new Uint8Array(NOISE_N * NOISE_N), d = new Uint8Array(NOISE_N * NOISE_N * 2);
+  for (let i = 0; i < R.length; i++) R[i] = Math.floor(r() * 256);
+  for (let y = 0; y < NOISE_N; y++) for (let x = 0; x < NOISE_N; x++){
+    const i = y * NOISE_N + x;
+    d[i * 2] = R[i]; d[i * 2 + 1] = R[((y + 17) % NOISE_N) * NOISE_N + (x + 37) % NOISE_N];
+  }
+  return d;
+})();
+const EYE = 1.25;                                                // eye height above the water (m)
+
+// GT7's SDR curve: peak at the 250-nit paper white (2.5 in frame-buffer units), with its shoulder constants and the
+// ICtCp intensity of a 250-nit grey (where chroma starts to fade)
+const GT7 = (() => {
+  const peak = 2.5, alpha = 0.25, lin = 0.444, k = (lin - 1) / (alpha - 1);
+  const ym = Math.pow(peak * 0.01, 0.1593017578125);
+  const targetI = Math.pow(2, 78.84375 * (Math.log2(0.8359375 + 18.8515625 * ym) - Math.log2(1 + 18.6875 * ym)));
+  return { peak, kA: peak * lin + peak * k, kB: -peak * k * Math.exp(lin / k), kC: -1 / (k * peak), targetI };
+})();
+// the haze band's half-heights as s0 (sin elevation): f = 1 - exp(-3 s0 / (|sin e| + s0)) halves at |sin e| = 3.33 s0
+const HZ = { up: Math.sin(LOOK.haze.up * Math.PI / 180) / 3.328, down: Math.sin(LOOK.haze.down * Math.PI / 180) / 3.328 };
+// framing: the horizon's place on the screen, the phone's focal length and density, the glint sun's elevation
+const HORIZON = 0.38;            // the horizon sits this far down the screen
+// the phone's picture on every screen: its focal length (60 degrees over the 812 CSS pixels of a phone's web view)
+// and its 1.2 render pixels per CSS pixel, so a CSS pixel shows the same piece of sea everywhere. Very wide windows
+// get a longer focal length, so the view stays within 100 degrees across.
+const PHONE_F = 406 / Math.tan(Math.PI / 6), PX_PER_CSS = 1.2;
+// the glint sun where the phone has it: 3.5 degrees above the top of the phone's 60-degree frame
+const GLINT_EL = 30 - Math.atan((1 - 2 * HORIZON) * Math.tan(Math.PI / 6)) * 180 / Math.PI + 3.5;
+// the moon's elevation and azimuth (degrees), and the light of the sun and the moon
+const MOON = [12, -12];
+const SUN_COL = [1.0, 0.95, 0.88].map(c => c * 5.0), MOON_COL = [0.62, 0.78, 0.95].map(c => c * 0.4);
+// lighting derived from the light's direction: refracted beam, flat-water transmission, ambient light under water
+const fresnelJS = c => { const s = Math.sqrt(Math.max(0, 1 - c * c)) / 1.333; if (s >= 1) return 1; const ct = Math.sqrt(1 - s * s);
+  const rs = (1.333 * c - ct) / (1.333 * c + ct), rp = (c - 1.333 * ct) / (c + 1.333 * ct); return 0.5 * (rs * rs + rp * rp); };
+const SIG = [0, 1, 2].map(i => [LOOK.sigA[i], LOOK.sigS[i]]);
+return { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, SUN_COL, MOON_COL, fresnelJS, SIG };
+})();
+</script>
+<script>
+/* ================= the lagoon on three.js (WebGL2): the fallback where WebGPU is missing =================
    The water follows CAUSTIC//VOLUME by Scottie (MIT, see licenses/caustic-volume.txt): a choppy JONSWAP FFT sea,
    photon-grid caustics on a sand bed and through a stack of depth slices, light shafts measured against the
    slices' local average, a sky with drifting cumulus and a bloom pyramid. The FFT pass, the height-field intersection
    and the B-spline filter come from Clearwater by Aurélien at Lumaris (MIT, see licenses/clearwater.txt). Tone mapping
    is GT7's, ported from Polyphony Digital's sample implementation (MIT, see licenses/gt7-tone-mapping.txt). three.js is
    a thin layer over WebGL2 here: every pass is a RawShaderMaterial drawn into a render target. */
-(function(){
+function startGL(){
+const { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, SUN_COL, MOON_COL, fresnelJS, SIG } = LAGOON;
 const root = document.documentElement;
 const noGL = () => root.classList.add("no-gl");
 if (!window.THREE) { noGL(); return; }
@@ -444,158 +639,14 @@ function fft(pair, n){
   return src;
 }
 
-/* ---------- the look, in one place ---------- */
-const LOOK = {
-  dbed: 1.1,                                   // depth of the sand bed in front of the viewer (m); it shelves away with distance
-  sea: 0.42, chop: 0.85,                       // sea state and choppiness
-  swell: { height: 0.08, length: 12, dir: 1.6, from: 10, to: 20 },   // the open sea's longer waves beyond the calm lagoon:
-                                               // rms height (m), peak wavelength (m), heading (rad; 1.6 rolls in toward the
-                                               // viewer, crests along the horizon), blended in between these distances (m)
-  tiling: { from: 8, to: 11, cell: 4.2, turn: 20 },   // stochastic tiling of the chop's patch: blended in between these
-                                               // distances (m), hexagonal cells this wide (m), turned within +-turn degrees
-  sigA: [0.75, 0.11, 0.045],                   // absorption per metre: red goes first, then green
-  sigS: [0.012, 0.02, 0.035],                  // scattering per metre: the particles that turn deep water blue
-  god: 1.7,                                    // how far the light shafts stand out from their local average
-  amb: 0.35,                                   // ambient light under water
-  sandLo: [0.78, 0.80, 0.78], sandHi: [0.93, 0.94, 0.91],
-  shelf: 0.45,                                 // how fast the bed falls away with distance (m per m)
-  fog: 250,                                    // distance over which the far sea goes behind the horizon haze (m)
-  sun: [55, 30],                               // elevation, azimuth (degrees, positive to the right)
-  glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
-  capillary: 0.003,                            // slope variance per axis of ripples finer than the FFT (Cox and Munk give
-                                               // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
-  facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
-  sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
-  exposure: 1.5,                               // scene to GT7 frame-buffer units (1.0 = 100 nits)
-  grade: { sat: [1.35, 2.4], hue: [0, 15] },   // before tone mapping, day and night: saturation, and a turn of the
-                                               // colours (degrees) that brings the night's blues to royal blue
-  myopia: { sharp: 3, blur: 0.3, night: 1.4 }, // slightly short-sighted eye: sharp to 3 m, then a defocus that grows to
-                                               // 0.3 degrees across at the horizon; the dilated night pupil adds 40%
-  haze: { veil: [0.35, 0.15], blur: [1.5, 0.8], glow: [0.05, 0.03], up: 3, down: 1 },   // around the horizon, day and
-                                               // night: airlight veil, softening (px) and forward-scatter glow at the
-                                               // horizon; the band's half-heights above and below it (degrees)
-  speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
-};
 const v3 = a => `vec3(${a.map(x => (+x).toFixed(4)).join(", ")})`;
 
-/* ---------- the sea: a JONSWAP spectrum with a cross swell, choppy FFT over a 4.2 m patch ---------- */
-const N = 256;
-const L = 4.2;                   // patch size (m)
-const DBED = LOOK.dbed;
-const SEA = LOOK.sea, CHOP = LOOK.chop;
-const RMS = 0.003 + SEA * SEA * 0.07 + SEA * 0.012, CHOPK = CHOP * (0.3 + 0.5 * SEA);
-const LOOP = 120;                // dispersion is quantised so the surface repeats every 2 minutes
-const DVOL = 3.0;                // depth spanned by the caustic slices (m)
 const GL_CONST = `
 const int N = ${N};
 const float PATCH = ${L.toFixed(2)}, DBED = ${DBED.toFixed(2)}, DVOL = ${DVOL.toFixed(2)}, PI = 3.14159265359;
 `;
-function mulberry(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-function gauss(r){ let u = 0; while (!u) u = r(); const v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
-function genSpectrum(){
-  const r = mulberry(7), windDir = 0.65, peak = 1.25, swell = 0.4, spread = 0.35;
-  const re = new Float32Array(N * N), im = new Float32Array(N * N);
-  const kp = 2 * Math.PI / peak, kp2 = 2 * Math.PI / (peak * 1.9), cutoff = (L / N) * 1.6, dk = 2 * Math.PI / L;
-  const jon = (k, kpk) => { const s = k < kpk ? 0.07 : 0.09; return Math.pow(k, -4) * Math.exp(-1.25 * (kpk / k) ** 2) * Math.pow(3.3, Math.exp(-((k - kpk) ** 2) / (2 * s * s * kpk * kpk))); };
-  const dirF = (th, dir, sharp) => Math.pow(Math.abs(Math.cos((th - dir) * 0.5)), sharp);
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
-    const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N, idx = j * N + i;
-    if (mx === 0 && mz === 0) continue;
-    const kx = mx * dk, kz = mz * dk, k = Math.hypot(kx, kz), th = Math.atan2(kz, kx);
-    const D = (1 - spread) * dirF(th, windDir, 12) * 1.9 + spread * 0.32, D2 = dirF(th, windDir + 1.1, 20) * 2.2;
-    const P = (jon(k, kp) * D + swell * jon(k, kp2) * D2 + 0.06 * Math.pow(k, -3.2) * spread) * Math.exp(-((k * cutoff) ** 2)) * dk * dk;
-    const a = Math.sqrt(P * 0.5);
-    re[idx] = gauss(r) * a; im[idx] = gauss(r) * a;
-  }
-  return spectrumTexture(re, im, N, L);
-}
-// a spectrum as a texture of h0(k) and conj(h0(-k)), normalised to unit height variance, with its slope statistics
-function spectrumTexture(re, im, N, L, exact = false){
-  const dk = 2 * Math.PI / L;
-  let variance = 0;
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
-    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
-    variance += re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m];
-  }
-  const sc = 1 / Math.sqrt(Math.max(variance, 1e-20)), data = new Float32Array(N * N * 4);
-  // slope statistics of this sea, for shading what the filtered map stops resolving with distance: the covariance of
-  // the slopes (central differences, as the slope pass takes them, or exact) and how their variance spreads over wavenumber
-  const dl = L / N, hist = new Float64Array(160); let sxx = 0, sxz = 0, szz = 0;   // bin b: k = 2^(b/12 - 4)
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
-    const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N;
-    if (mx === -N / 2 || mz === -N / 2 || (mx === 0 && mz === 0)) continue;
-    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
-    const pw = (re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m]) * sc * sc;
-    const gx = exact ? mx * dk : Math.sin(mx * dk * dl) / dl, gz = exact ? mz * dk : Math.sin(mz * dk * dl) / dl;
-    sxx += pw * gx * gx; sxz += pw * gx * gz; szz += pw * gz * gz;
-    hist[Math.max(0, Math.min(159, Math.round((Math.log2(Math.hypot(mx, mz) * dk) + 4) * 12)))] += pw * (gx * gx + gz * gz);
-  }
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
-    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
-    data[idx * 4] = re[idx] * sc; data[idx * 4 + 1] = im[idx] * sc; data[idx * 4 + 2] = re[m] * sc; data[idx * 4 + 3] = -im[m] * sc;
-  }
-  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.FloatType);
-  t.needsUpdate = true;
-  t.userData = { sxx, sxz, szz, hist };
-  return t;
-}
-const H0 = genSpectrum();
-// how a Gaussian filter of width w removes a spectrum's slope variance: x^p / (1 + x^p) with x = w / s50 (s50 removes
-// half; p, fitted, is 1.65 for the chop and steeper for the narrower swell), the share gone at the finest footprint
-// (floor texels wide) by that curve, g0, and exactly, lost0
-function lossCurve(hist, texel, floor = 0.8){
-  const tot = hist.reduce((x, v) => x + v, 0);
-  const lost = w => 1 - hist.reduce((x, v, b) => x + v * Math.exp(-0.5 * (2 ** (b / 12 - 4) * w) ** 2), 0) / tot;
-  let lo = 1e-4, hi = 100;
-  for (let i = 0; i < 56; i++){ const mid = Math.sqrt(lo * hi); if (lost(mid) < 0.5) lo = mid; else hi = mid; }
-  const s50 = Math.sqrt(lo * hi);
-  let p = 1.65, best = Infinity;
-  for (let q = 0.8; q <= 4.001; q += 0.05){
-    let e = 0;
-    for (let i = -40; i <= 40; i++){ const x = 2 ** (i / 10 * q); e += (lost(s50 * 2 ** (i / 10)) - x / (1 + x)) ** 2; }
-    if (e < best){ best = e; p = q; }
-  }
-  const x0 = Math.pow(floor * texel / s50, p);
-  return { s50, p, g0: x0 / (1 + x0), lost0: lost(floor * texel) };
-}
-// The slopes the shading can count on: the patch plus its rotated, larger copy, scaled to world heights, times the share
-// of the spectrum's slope variance that the choppy inversion and the B-spline keep at the finest footprint (0.72,
-// measured). s50 is the width of a Gaussian filter that removes half of it.
-const SLOPE = (() => {
-  const { sxx, sxz, szz, hist } = H0.userData, k = RMS * RMS * 0.72, wb = 0.22;
-  const R = [[0.8, -0.6], [0.6, 0.8]], M = [[sxx, sxz], [sxz, szz]], C = [[0, 0], [0, 0]];   // R = transpose(SW)
-  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let p = 0; p < 2; p++) for (let q = 0; q < 2; q++) C[a][b] += R[a][p] * M[p][q] * R[b][q];
-  const cov = [k * (sxx + wb * wb * C[0][0]), k * (sxz + wb * wb * C[0][1]), k * (szz + wb * wb * C[1][1])];
-  return { cov, ...lossCurve(hist, L / N) };
-})();
-
-/* ---------- the swell: the open sea's longer waves, composed with the chop far out ----------
-   It is seen only from LOOK.swell.from on, where a pixel spans decimetres along the view, so it can be coarse: a 32 x 32
-   FFT over 61.4 m (14.6 times the chop's patch, so the two never share a period), waves from 8 m up (four texels each
-   at the least), a swell peaked at LOOK.swell.length with a narrow spread, rolling in toward the viewer so that far out
-   its crests lie along the horizon. Only its slopes are used, taken exactly in the spectrum (i k h), so one FFT gives
-   both and no slope pass is needed. */
-const N2 = 32, L2 = 61.44;
-const H0S = (() => {
-  const r = mulberry(11), dk = 2 * Math.PI / L2, kp = 2 * Math.PI / LOOK.swell.length, kcut = 2 * Math.PI / 8;
-  const re = new Float32Array(N2 * N2), im = new Float32Array(N2 * N2);
-  for (let j = 0; j < N2; j++) for (let i = 0; i < N2; i++){
-    const mx = i < N2 / 2 ? i : i - N2, mz = j < N2 / 2 ? j : j - N2, idx = j * N2 + i;
-    const k = Math.hypot(mx, mz) * dk, th = Math.atan2(mz, mx);
-    if (k === 0 || k > kcut) continue;
-    const sg = k < kp ? 0.07 : 0.09;
-    const P = Math.pow(k, -4) * Math.exp(-1.25 * (kp / k) ** 2) * Math.pow(3.3, Math.exp(-((k - kp) ** 2) / (2 * sg * sg * kp * kp)))
-            * Math.pow(Math.abs(Math.cos((th - LOOK.swell.dir) * 0.5)), 24) * dk * dk;
-    const a = Math.sqrt(P * 0.5);
-    re[idx] = gauss(r) * a; im[idx] = gauss(r) * a;
-  }
-  return spectrumTexture(re, im, N2, L2, true);
-})();
-// its slopes, less what bilinear filtering of the finest level takes (a filter 0.41 texel wide)
-const SLOPE2 = (() => {
-  const { sxx, sxz, szz, hist } = H0S.userData, c = lossCurve(hist, L2 / N2, 0.41), k = LOOK.swell.height ** 2 * (1 - c.lost0);
-  return { cov: [k * sxx, k * sxz, k * szz], ...c };
-})();
+const specTex = (sp, n) => { const t = new THREE.DataTexture(sp.data, n, n, THREE.RGBAFormat, THREE.FloatType); t.needsUpdate = true; return t; };
+const H0 = specTex(H0_DATA, N), H0S = specTex(H0S_DATA, N2);
 const ocean = [rt(N, N, FFT_TYPE, { nearest: true }), rt(N, N, FFT_TYPE, { nearest: true })];
 const dispRT = rt(N, N, HALF, { repeat: true }), heightRT = rt(N, N, HALF, { nearest: true });
 const surfRT = rt(N, N, HALF, { repeat: true, mip: true, aniso: 8 });
@@ -753,13 +804,10 @@ function causScene(geo, mats){
   return sc;
 }
 // the bed: one map per colour channel, each refracted with its own index (dispersion)
-const FLOOR_RES = 1024;
 const floorRT = rt(FLOOR_RES, FLOOR_RES, HALF, { repeat: true, mip: true, aniso: 8 });
-const CAUS_EDGE = { floor: 24, slice: 24 };   // the window's margin in cells: room for the slopes' spread of the light (a low moon spreads it most)
 const floorScene = causScene(photonGrid(192, CAUS_EDGE.floor), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
   .map(([ior, m]) => causMaterial(ior, m, -DBED, 0.0, 192)));
 // the volume: eight horizontal slices from the surface to the bed, four to a texture (one per channel)
-const SLICES = 8, SLICE_RES = 256;
 const sliceRT = [0, 1].map(() => rt(SLICE_RES, SLICE_RES, HALF, { repeat: true, mip: true }));
 const sliceGeo = photonGrid(96, CAUS_EDGE.slice);
 const sliceScenes = [0, 1].map(r => causScene(sliceGeo, [0, 1, 2, 3].map(c => {
@@ -850,7 +898,6 @@ vec3 skyRadiance(vec3 d){
   return col * mix(${LOOK.sky.toFixed(3)}, 0.85, uNight);
 }
 `;
-const ENV_W = 512, ENV_H = 256;
 const envRT = rt(ENV_W, ENV_H, HALF, { repeat: true, clampT: true, mip: true, aniso: 4 });
 const mEnv = shader(SKY_GLSL + `
 void main(){
@@ -864,22 +911,11 @@ void main(){
    Grain finer than the lattice can afford, and the ripples' noise, which changes all the time, read a small periodic
    texture of random values instead: R holds the values, G the same values 37 and 17 texels on, so one read serves two
    slices of 3D noise (vnoiseT, vnoise3T). */
-const HASH_O = [-224, -260], HASH_W = 448, HASH_H = 304;      // lattice cells x from -224, z from -260
 const hashRT = rt(HASH_W, HASH_H, HALF);
 draw(shader(`float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main(){ o = vec4(hash12(floor(gl_FragCoord.xy) + vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0)), 0.0, 0.0, 1.0); }`, {}), hashRT);
-const NOISE_N = 256;
-const noiseTex = (() => {
-  const r = mulberry(5), R = new Uint8Array(NOISE_N * NOISE_N), d = new Uint8Array(NOISE_N * NOISE_N * 2);
-  for (let i = 0; i < R.length; i++) R[i] = Math.floor(r() * 256);
-  for (let y = 0; y < NOISE_N; y++) for (let x = 0; x < NOISE_N; x++){
-    const i = y * NOISE_N + x;
-    d[i * 2] = R[i]; d[i * 2 + 1] = R[((y + 17) % NOISE_N) * NOISE_N + (x + 37) % NOISE_N];
-  }
-  const t = new THREE.DataTexture(d, NOISE_N, NOISE_N, THREE.RGFormat, THREE.UnsignedByteType);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
-  return t;
-})();
+const noiseTex = new THREE.DataTexture(NOISE_DATA, NOISE_N, NOISE_N, THREE.RGFormat, THREE.UnsignedByteType);
+noiseTex.wrapS = noiseTex.wrapT = THREE.RepeatWrapping; noiseTex.magFilter = noiseTex.minFilter = THREE.LinearFilter; noiseTex.needsUpdate = true;
 const NOISE_GLSL = `
 uniform sampler2D uHash, uNoise;
 const vec2 HASH_O = vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0), HASH_S = vec2(${HASH_W}.0, ${HASH_H}.0);
@@ -902,7 +938,6 @@ float vnoise3T(vec3 p){
 
 /* ---------- the visible world: one full-screen pass, ray cast against the sea ---------- */
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
-const EYE = 1.25;                                                // eye height above the water (m)
 const camRot = new THREE.Matrix3(), res = new THREE.Vector2(1, 1);
 const mWater = shader(GL_CONST + SKY_GLSL + NOISE_GLSL + FRESNEL + `
 uniform sampler2D uSurf, uSurf2, uFloor, uSliceA, uSliceB, uEnv;
@@ -1193,16 +1228,6 @@ void main(){
 });
 
 /* ---------- post: bloom pyramid, haze and defocus, GT7 tone mapping; no temporal accumulation ---------- */
-// GT7's SDR curve: peak at the 250-nit paper white (2.5 in frame-buffer units), with its shoulder constants and the
-// ICtCp intensity of a 250-nit grey (where chroma starts to fade)
-const GT7 = (() => {
-  const peak = 2.5, alpha = 0.25, lin = 0.444, k = (lin - 1) / (alpha - 1);
-  const ym = Math.pow(peak * 0.01, 0.1593017578125);
-  const targetI = Math.pow(2, 78.84375 * (Math.log2(0.8359375 + 18.8515625 * ym) - Math.log2(1 + 18.6875 * ym)));
-  return { peak, kA: peak * lin + peak * k, kB: -peak * k * Math.exp(lin / k), kC: -1 / (k * peak), targetI };
-})();
-// the haze band's half-heights as s0 (sin elevation): f = 1 - exp(-3 s0 / (|sin e| + s0)) halves at |sin e| = 3.33 s0
-const HZ = { up: Math.sin(LOOK.haze.up * Math.PI / 180) / 3.328, down: Math.sin(LOOK.haze.down * Math.PI / 180) / 3.328 };
 const mBloomDown = shader(`
 uniform sampler2D tIn; uniform vec2 uTexel; uniform int uFirst;
 vec3 s(vec2 d){ return textureLod(tIn, vUv + d * uTexel, 0.0).rgb; }
@@ -1364,17 +1389,10 @@ let quality = 1.0;
 const size = new THREE.Vector2();
 // sun and moon by elevation and azimuth (degrees, positive to the right)
 const toward = (v, el, az) => v.set(Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), Math.sin(el * Math.PI / 180), -Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
-const HORIZON = 0.38;            // the horizon sits this far down the screen
 let basePitch = 0;
 // a high sun from the front right lights the bed hard; the moon hangs low on the left, with its glitter path
 const glintDay = new THREE.Vector3();
-const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = toward(new THREE.Vector3(), 12, -12);
-// the phone's picture on every screen: its focal length (60 degrees over the 812 CSS pixels of a phone's web view)
-// and its 1.2 render pixels per CSS pixel, so a CSS pixel shows the same piece of sea everywhere. Very wide windows
-// get a longer focal length, so the view stays within 100 degrees across.
-const PHONE_F = 406 / Math.tan(Math.PI / 6), PX_PER_CSS = 1.2;
-// the glint sun where the phone has it: 3.5 degrees above the top of the phone's 60-degree frame
-const GLINT_EL = 30 - Math.atan((1 - 2 * HORIZON) * Math.tan(Math.PI / 6)) * 180 / Math.PI + 3.5;
+const sunDay = toward(new THREE.Vector3(), LOOK.sun[0], LOOK.sun[1]), moon = toward(new THREE.Vector3(), MOON[0], MOON[1]);
 function frame(){
   const w = innerWidth, h = innerHeight;
   const pr = PX_PER_CSS * quality;
@@ -1405,15 +1423,11 @@ function frame(){
   toward(glintDay, GLINT_EL, 4);
   mWater.uniforms.uPixAng.value = 2 * Math.tan(camera.fov * Math.PI / 360) / H;
 }
-const sunColDay = new THREE.Vector3(1.0, 0.95, 0.88).multiplyScalar(5.0);
-const moonCol = new THREE.Vector3(0.62, 0.78, 0.95).multiplyScalar(0.4);
+const sunColDay = new THREE.Vector3(...SUN_COL), moonCol = new THREE.Vector3(...MOON_COL);
 frame();
 addEventListener("resize", frame, { passive: true });
 
 // lighting derived from the light's direction: refracted beam, flat-water transmission, ambient light under water
-const fresnelJS = c => { const s = Math.sqrt(Math.max(0, 1 - c * c)) / 1.333; if (s >= 1) return 1; const ct = Math.sqrt(1 - s * s);
-  const rs = (1.333 * c - ct) / (1.333 * c + ct), rp = (c - 1.333 * ct) / (c + 1.333 * ct); return 0.5 * (rs * rs + rp * rp); };
-const SIG = [0, 1, 2].map(i => [LOOK.sigA[i], LOOK.sigS[i]]);
 function lighting(n){
   const s = light.sun.value.copy(sunDay).lerp(moon, n).normalize(), col = light.col.value.copy(sunColDay).lerp(moonCol, n);
   light.glint.value.copy(glintDay).lerp(moon, n).normalize();
@@ -1490,8 +1504,19 @@ function tick(now){
   }
 }
 raf = requestAnimationFrame(tick);
-})();
+}
 
+</script>
+<script>
+/* ================= boot: the renderer =================
+   three.js is fetched only for the WebGL2 fallback. */
+(function(){
+  const noGL = () => document.documentElement.classList.add("no-gl");
+  const js = document.createElement("script");
+  js.src = "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js";
+  js.onload = () => startGL(); js.onerror = noGL;
+  document.head.appendChild(js);
+})();
 </script>
 <script>
 /* ---------------- diagnostics: anghel4d.com/#diag ----------------
