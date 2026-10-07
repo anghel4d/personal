@@ -90,6 +90,16 @@ a{color:inherit}
 .layer > .inner{opacity:0;transform:translateY(8px);transition:opacity .55s ease .1s,transform .55s ease .1s}
 .layer.shown > .inner{opacity:1;transform:none}
 .close{position:fixed;z-index:6}
+/* poise: scrolling on past a panel's end fills a hairline gauge; full, the panel gives way to the next */
+.poise{position:fixed;z-index:6;left:50%;bottom:calc(var(--pad) + 4px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  display:flex;flex-direction:column;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;
+  text-transform:lowercase;white-space:nowrap;color:var(--ink-soft);opacity:0;pointer-events:none}
+.poise i{display:block;width:128px;height:1px;background:currentColor;transform:scaleX(0)}
+.poise.broke i{background:var(--ink);transform:scaleX(1.3) !important;opacity:0;transition:transform .32s cubic-bezier(.2,.7,.2,1),opacity .32s ease .08s}
+.layer.poised > .inner{transition:opacity .55s ease .1s,transform .14s ease-out}
+.layer.leave > .inner{opacity:0;transform:translateY(-34px) !important;transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.6,1)}
+.layer.rise > .inner{transform:translateY(40px)}
+.layer.rise.shown > .inner{transform:none}
 
 nav.menu .inner{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(10px,2.2vh,22px)}
 nav.menu a{font-style:italic;font-size:clamp(34px,5.4vw,68px);line-height:1.1;text-decoration:none;font-variation-settings:"opsz" 72;font-weight:300}
@@ -164,17 +174,17 @@ body,.chrome,.statement{transition:color 1.2s ease}
 </a>
 
 <div class="chrome tr"><button id="menuBtn" aria-expanded="false" aria-controls="menu" data-i18n="menu">menu</button></div>
-<div class="chrome bl"><span data-i18n="name">Matei Anghel</span></div>
-<div class="chrome br">
+<div class="chrome bl">
   <div class="lang" role="group" aria-label="Language">
     <button data-lang="en" aria-pressed="true">en</button><span class="sep" aria-hidden="true">/</span><button data-lang="fr" aria-pressed="false">fr</button>
   </div>
-  <button id="themeBtn" aria-live="polite">day</button>
 </div>
+<div class="chrome br"><button id="themeBtn" aria-live="polite">day</button></div>
 
 <p class="statement" id="statement"></p>
 
 <div class="veil" id="veil"></div>
+<div class="poise" id="poise" aria-hidden="true"><span></span><i></i></div>
 
 <nav class="layer menu" id="menu" aria-label="Site">
   <div class="inner">
@@ -209,10 +219,10 @@ const S = window.A4D_STATE;
 addEventListener("pointermove", e => { S.pointer = [ (e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1 ]; }, { passive: true });
 const T = {
 en:{
-  menu:"menu", close:"close", name:"Matei Anghel", auto:"auto", day:"day", night:"night",
+  menu:"menu", close:"close", day:"day", night:"night",
   diag:"diag", diagLabel:"Diagnostics", diagText:"Diagnostics as text", diagCopy:"copy", diagCopied:"copied",
   diagLive:"live, every second", diagBlocked:"copy blocked here; text selected below",
-  work:"Work", about:"About", contact:"Contact",
+  work:"Work", about:"About", contact:"Contact", next:"next",
   statement:'Matei Anghel is a goated vibe coder and you should probably <a href="#work" data-go="work">hire him</a>.',
   workH:"Work",
   items:[
@@ -242,10 +252,10 @@ en:{
   contactRest:'Code lives on <a href="https://github.com/anghel4d" target="_blank" rel="noopener">GitHub</a>, and I am <a href="https://x.com/pyrusdotc" target="_blank" rel="noopener">@pyrusdotc</a> on X.'
 },
 fr:{
-  menu:"menu", close:"fermer", name:"Matei Anghel", auto:"auto", day:"jour", night:"nuit",
+  menu:"menu", close:"fermer", day:"jour", night:"nuit",
   diag:"diag", diagLabel:"Diagnostic", diagText:"Diagnostic en texte", diagCopy:"copier", diagCopied:"copié",
   diagLive:"en direct, chaque seconde", diagBlocked:"copie bloquée ici ; texte sélectionné ci-dessous",
-  work:"Travaux", about:"À propos", contact:"Contact",
+  work:"Travaux", about:"À propos", contact:"Contact", next:"suivant",
   statement:'Matei Anghel est un vibe coder hors pair, et vous devriez probablement <a href="#work" data-go="work">l’embaucher</a>.',
   workH:"Travaux",
   items:[
@@ -309,6 +319,7 @@ let current = "home";
 function show(id){
   const layers = ["menu","work","about","contact"];
   layers.forEach(l => { const el = document.getElementById(l); el.classList.remove("shown"); el.classList.remove("on"); });
+  if (typeof pzReset === "function" && !breaking) pzReset();
   current = id; S.open = id !== "home";
   if (id === "home"){ body.classList.remove("open"); menuBtn.setAttribute("aria-expanded","false"); updateMenuLabel(); return; }
   body.classList.add("open");
@@ -334,29 +345,82 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && current !=
 window.addEventListener("popstate", () => { const h = location.hash.slice(1); show(["work","about","contact","menu"].includes(h) ? h : "home"); });
 document.querySelectorAll("[data-lang]").forEach(b => b.addEventListener("click", () => { lang = b.dataset.lang; store("a4d-lang", lang); render(); }));
 
+/* ---------------- poise: past a panel's end, the next one ----------------
+   At the bottom of Work or About, scrolling on (wheel, a drag up, or Page Down, Space, the down arrow) loads a hairline
+   gauge under "next · about", and the panel leans up a little. It drains as soon as the scrolling stops. Full, it
+   breaks: the panel lifts away and the next one rises in from below. It arms only on a fresh gesture at the end, so
+   the momentum of the scroll that reached the end cannot fill it. */
+const NEXT = { work: "about", about: "contact" };
+const poise = document.getElementById("poise"), poiseFill = poise.querySelector("i"), poiseLabel = poise.querySelector("span");
+let pz = 0, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = false, touch = null, breaking = false;
+const layerOf = () => document.getElementById(current);
+const atEnd = el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+function pzDraw(){
+  const el = layerOf();
+  poise.style.opacity = String(Math.min(1, pz * 2.5));
+  poiseFill.style.transform = `scaleX(${pz})`;
+  if (el){ el.classList.toggle("poised", pz > 0); el.firstElementChild.style.transform = pz > 0 ? `translateY(${(-16 * pz).toFixed(2)}px)` : ""; }
+}
+function pzTick(now){
+  pzRaf = 0;
+  if (breaking) return;
+  if (!touch && now - pzAt > 160) pz = Math.max(0, pz - 1.6 * 16.7 / 1000 * (1 + pz));   // drains in about half a second
+  pzDraw();
+  if (pz > 0) pzRaf = requestAnimationFrame(pzTick);
+}
+function pzSet(v){
+  if (breaking || !NEXT[current]) return;
+  pz = Math.min(1, Math.max(0, v)); pzAt = performance.now();
+  poiseLabel.textContent = T[lang].next + " · " + T[lang][NEXT[current]];
+  pzDraw();
+  if (pz >= 1) return pzBreak();
+  if (!pzRaf) pzRaf = requestAnimationFrame(pzTick);
+}
+function pzBreak(){
+  breaking = true;
+  const from = layerOf(), to = NEXT[current];
+  poise.classList.add("broke"); from.classList.add("leave");
+  setTimeout(() => {
+    from.classList.remove("leave", "poised"); from.firstElementChild.style.transform = "";
+    const next = document.getElementById(to); next.classList.add("rise");
+    go(to);
+    setTimeout(() => next.classList.remove("rise"), 700);
+    poise.classList.remove("broke"); pz = 0; armed = false; touch = null; breaking = false; pzDraw();
+  }, 300);
+}
+function pzReset(){ pz = 0; armed = false; touch = null; pzDraw(); }
+addEventListener("wheel", e => {
+  const now = performance.now(), quiet = now - wheelAt > 220; wheelAt = now;
+  if (!NEXT[current] || breaking) return;
+  if (e.deltaY <= 0 || !atEnd(layerOf())){ armed = false; return; }
+  if (!armed && quiet) armed = true;                       // a new gesture that starts at the end
+  if (armed) pzSet(pz + e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1) / 650);
+}, { passive: true });
+addEventListener("touchstart", e => {
+  touch = NEXT[current] && atEnd(layerOf()) ? { y: e.touches[0].clientY, base: pz } : null;
+}, { passive: true });
+addEventListener("touchmove", e => { if (touch) pzSet(touch.base + (touch.y - e.touches[0].clientY) / 190); }, { passive: true });
+addEventListener("touchend", () => { touch = null; pzAt = 0; if (pz > 0 && !pzRaf) pzRaf = requestAnimationFrame(pzTick); }, { passive: true });
+addEventListener("keydown", e => {
+  if (!NEXT[current] || breaking || !["PageDown", "ArrowDown", " ", "End"].includes(e.key)) return;
+  if (e.target.closest && e.target.closest("textarea, input")) return;
+  if (atEnd(layerOf())) pzSet(pz + 0.34);
+});
+
 /* ---------------- theme ---------------- */
 const root = document.documentElement;
+// day or night. The system's (or the host page's) light or dark setting picks the first one, once, as the page loads;
+// after that the button switches between the two.
 const viewerTheme = root.getAttribute("data-theme");
-const modes = ["day","night","auto"];
-let mode = modes.includes(load("a4d-mode")) ? load("a4d-mode") : "day";
-const mq = matchMedia("(prefers-color-scheme: dark)");
-function isNight(){
-  if (mode === "night") return true;
-  if (mode === "day") return false;
-  const vt = viewerTheme;
-  if (vt === "dark") return true; if (vt === "light") return false;
-  return mq.matches;
-}
+let mode = viewerTheme === "dark" || (viewerTheme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "night" : "day";
 function applyTheme(){
-  if (mode === "auto"){ if (viewerTheme) root.setAttribute("data-theme", viewerTheme); else root.removeAttribute("data-theme"); }
-  else root.setAttribute("data-theme", mode === "night" ? "dark" : "light");
-  const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = isNight() ? "#071824" : "#E6F0F3";
-  S.targetNight = isNight() ? 1 : 0;
+  root.setAttribute("data-theme", mode === "night" ? "dark" : "light");
+  const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = mode === "night" ? "#071824" : "#E6F0F3";
+  S.targetNight = mode === "night" ? 1 : 0;
   updateThemeLabel();
 }
 function updateThemeLabel(){ const b = document.getElementById("themeBtn"); b.textContent = T[lang][mode]; b.setAttribute("aria-label", "Theme: " + mode); }
-document.getElementById("themeBtn").addEventListener("click", () => { mode = modes[(modes.indexOf(mode) + 1) % 3]; store("a4d-mode", mode); applyTheme(); });
-mq.addEventListener && mq.addEventListener("change", applyTheme);
+document.getElementById("themeBtn").addEventListener("click", () => { mode = mode === "day" ? "night" : "day"; applyTheme(); });
 
 /* ---------------- boot ---------------- */
 lang = load("a4d-lang") === "fr" ? "fr" : (navigator.language || "").toLowerCase().startsWith("fr") && !load("a4d-lang") ? "fr" : "en";
