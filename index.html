@@ -448,8 +448,9 @@ function fft(pair, n){
 const LOOK = {
   dbed: 1.1,                                   // depth of the sand bed in front of the viewer (m); it shelves away with distance
   sea: 0.42, chop: 0.85,                       // sea state and choppiness
-  swell: { height: 0.07, length: 12, dir: 1.6 },   // longer waves under the chop: rms height (m), peak wavelength (m),
-                                               // heading (rad; 1.6 rolls in toward the viewer, crests along the horizon)
+  swell: { height: 0.08, length: 12, dir: 1.6, from: 10, to: 20 },   // the open sea's longer waves beyond the calm lagoon:
+                                               // rms height (m), peak wavelength (m), heading (rad; 1.6 rolls in toward the
+                                               // viewer, crests along the horizon), blended in between these distances (m)
   tiling: { from: 8, to: 11, cell: 4.2, turn: 20 },   // stochastic tiling of the chop's patch: blended in between these
                                                // distances (m), hexagonal cells this wide (m), turned within +-turn degrees
   sigA: [0.75, 0.11, 0.045],                   // absorption per metre: red goes first, then green
@@ -509,7 +510,7 @@ function genSpectrum(){
   return spectrumTexture(re, im, N, L);
 }
 // a spectrum as a texture of h0(k) and conj(h0(-k)), normalised to unit height variance, with its slope statistics
-function spectrumTexture(re, im, N, L){
+function spectrumTexture(re, im, N, L, exact = false){
   const dk = 2 * Math.PI / L;
   let variance = 0;
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
@@ -518,14 +519,14 @@ function spectrumTexture(re, im, N, L){
   }
   const sc = 1 / Math.sqrt(Math.max(variance, 1e-20)), data = new Float32Array(N * N * 4);
   // slope statistics of this sea, for shading what the filtered map stops resolving with distance: the covariance of
-  // the slopes (central differences, as the slope pass takes them) and how their variance spreads over wavenumber
+  // the slopes (central differences, as the slope pass takes them, or exact) and how their variance spreads over wavenumber
   const dl = L / N, hist = new Float64Array(160); let sxx = 0, sxz = 0, szz = 0;   // bin b: k = 2^(b/12 - 4)
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
     const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N;
     if (mx === -N / 2 || mz === -N / 2 || (mx === 0 && mz === 0)) continue;
     const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
     const pw = (re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m]) * sc * sc;
-    const gx = Math.sin(mx * dk * dl) / dl, gz = Math.sin(mz * dk * dl) / dl;
+    const gx = exact ? mx * dk : Math.sin(mx * dk * dl) / dl, gz = exact ? mz * dk : Math.sin(mz * dk * dl) / dl;
     sxx += pw * gx * gx; sxz += pw * gx * gz; szz += pw * gz * gz;
     hist[Math.max(0, Math.min(159, Math.round((Math.log2(Math.hypot(mx, mz) * dk) + 4) * 12)))] += pw * (gx * gx + gz * gz);
   }
@@ -540,8 +541,9 @@ function spectrumTexture(re, im, N, L){
 }
 const H0 = genSpectrum();
 // how a Gaussian filter of width w removes a spectrum's slope variance: x^p / (1 + x^p) with x = w / s50 (s50 removes
-// half; p, fitted, is 1.65 for the chop and steeper for the narrower swell), and the share gone at the finest footprint
-function lossCurve(hist, texel){
+// half; p, fitted, is 1.65 for the chop and steeper for the narrower swell), the share gone at the finest footprint
+// (floor texels wide) by that curve, g0, and exactly, lost0
+function lossCurve(hist, texel, floor = 0.8){
   const tot = hist.reduce((x, v) => x + v, 0);
   const lost = w => 1 - hist.reduce((x, v, b) => x + v * Math.exp(-0.5 * (2 ** (b / 12 - 4) * w) ** 2), 0) / tot;
   let lo = 1e-4, hi = 100;
@@ -553,8 +555,8 @@ function lossCurve(hist, texel){
     for (let i = -40; i <= 40; i++){ const x = 2 ** (i / 10 * q); e += (lost(s50 * 2 ** (i / 10)) - x / (1 + x)) ** 2; }
     if (e < best){ best = e; p = q; }
   }
-  const x0 = Math.pow(0.8 * texel / s50, p);
-  return { s50, p, g0: x0 / (1 + x0) };
+  const x0 = Math.pow(floor * texel / s50, p);
+  return { s50, p, g0: x0 / (1 + x0), lost0: lost(floor * texel) };
 }
 // The slopes the shading can count on: the patch plus its rotated, larger copy, scaled to world heights, times the share
 // of the spectrum's slope variance that the choppy inversion and the B-spline keep at the finest footprint (0.72,
@@ -567,13 +569,15 @@ const SLOPE = (() => {
   return { cov, ...lossCurve(hist, L / N) };
 })();
 
-/* ---------- the swell: longer waves from a second, larger patch, composed with the chop ----------
-   A 64 x 64 FFT over 61.4 m, 14.6 times the chop's patch, so the two never share a period. It holds only wavelengths
-   longer than the chop's patch reaches (5 to 61 m): a swell peaked at LOOK.swell.length with a narrow spread, rolling
-   in toward the viewer, so far out its crests lie along the horizon. No chop: heights and slopes straight from the FFT. */
-const N2 = 64, L2 = 61.44;
+/* ---------- the swell: the open sea's longer waves, composed with the chop far out ----------
+   It is seen only from LOOK.swell.from on, where a pixel spans decimetres along the view, so it can be coarse: a 32 x 32
+   FFT over 61.4 m (14.6 times the chop's patch, so the two never share a period), waves from 8 m up (four texels each
+   at the least), a swell peaked at LOOK.swell.length with a narrow spread, rolling in toward the viewer so that far out
+   its crests lie along the horizon. Only its slopes are used, taken exactly in the spectrum (i k h), so one FFT gives
+   both and no slope pass is needed. */
+const N2 = 32, L2 = 61.44;
 const H0S = (() => {
-  const r = mulberry(11), dk = 2 * Math.PI / L2, kp = 2 * Math.PI / LOOK.swell.length, kcut = 0.85 * 2 * Math.PI / L;
+  const r = mulberry(11), dk = 2 * Math.PI / L2, kp = 2 * Math.PI / LOOK.swell.length, kcut = 2 * Math.PI / 8;
   const re = new Float32Array(N2 * N2), im = new Float32Array(N2 * N2);
   for (let j = 0; j < N2; j++) for (let i = 0; i < N2; i++){
     const mx = i < N2 / 2 ? i : i - N2, mz = j < N2 / 2 ? j : j - N2, idx = j * N2 + i;
@@ -585,11 +589,12 @@ const H0S = (() => {
     const a = Math.sqrt(P * 0.5);
     re[idx] = gauss(r) * a; im[idx] = gauss(r) * a;
   }
-  return spectrumTexture(re, im, N2, L2);
+  return spectrumTexture(re, im, N2, L2, true);
 })();
+// its slopes, less what bilinear filtering of the finest level takes (a filter 0.41 texel wide)
 const SLOPE2 = (() => {
-  const { sxx, sxz, szz, hist } = H0S.userData, k = LOOK.swell.height * LOOK.swell.height;
-  return { cov: [k * sxx, k * sxz, k * szz], ...lossCurve(hist, L2 / N2) };
+  const { sxx, sxz, szz, hist } = H0S.userData, c = lossCurve(hist, L2 / N2, 0.41), k = LOOK.swell.height ** 2 * (1 - c.lost0);
+  return { cov: [k * sxx, k * sxz, k * szz], ...c };
 })();
 const ocean = [rt(N, N, FFT_TYPE, { nearest: true }), rt(N, N, FFT_TYPE, { nearest: true })];
 const dispRT = rt(N, N, HALF, { repeat: true }), heightRT = rt(N, N, HALF, { nearest: true });
@@ -656,30 +661,25 @@ void main(){
   int mx = c.x < N / 2 ? c.x : c.x - N, mz = c.y < N / 2 ? c.y : c.y - N;
   if (mx == -N / 2 || mz == -N / 2 || (mx == 0 && mz == 0)){ o = vec4(0.0); return; }
   vec4 h0 = texelFetch(uH0, c, 0) * ${LOOK.swell.height.toFixed(4)};
-  float kl = 2.0 * PI * length(vec2(float(mx), float(mz))) / PATCH;
-  float w = sqrt(9.81 * kl * tanh(min(kl * 8.0, 20.0)));                 // about 8 m of water under the swell
+  vec2 k = 2.0 * PI * vec2(float(mx), float(mz)) / PATCH;
+  float kl = length(k), w = sqrt(9.81 * kl * tanh(min(kl * 8.0, 20.0)));   // about 8 m of water under the swell
   float w0 = 2.0 * PI / ${LOOP.toFixed(1)}; w = max(floor(w / w0 + 0.5), 1.0) * w0;
   float cw = cos(w * uT), sw = sin(w * uT);
   vec2 a = h0.xy, b = h0.zw;
-  o = vec4(vec2(a.x * cw - a.y * sw, a.x * sw + a.y * cw) + vec2(b.x * cw + b.y * sw, b.y * cw - b.x * sw), 0.0, 0.0);
+  vec2 h = vec2(a.x * cw - a.y * sw, a.x * sw + a.y * cw) + vec2(b.x * cw + b.y * sw, b.y * cw - b.x * sw);
+  o = vec4(-k.x * h.y - k.y * h.x, k.x * h.x - k.y * h.y, 0.0, 0.0);    // i kx h + i (i kz h): the slopes as one complex
 }`, { uH0: H0S, uT: 0 });
-// (height, dh/dx, dh/dz) by central differences
-const mSlopes2 = shader(`
-const int N = ${N2}; const float PATCH = ${L2.toFixed(2)};
+// the slopes into a filtered, mipmapped texture
+const mCopy2 = shader(`
 uniform sampler2D uSrc;
-void main(){
-  ivec2 c = ivec2(gl_FragCoord.xy);
-  float l = texelFetch(uSrc, ivec2((c.x + N - 1) % N, c.y), 0).x, r = texelFetch(uSrc, ivec2((c.x + 1) % N, c.y), 0).x;
-  float d = texelFetch(uSrc, ivec2(c.x, (c.y + N - 1) % N), 0).x, u = texelFetch(uSrc, ivec2(c.x, (c.y + 1) % N), 0).x;
-  o = vec4(texelFetch(uSrc, c, 0).x, vec2(r - l, u - d) * (float(N) / (2.0 * PATCH)), 0.0);
-}`, { uSrc: null });
+void main(){ o = vec4(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).xy, 0.0, 0.0); }`, { uSrc: null });
 function runSea(t){
   draw(mSpec, ocean[0], { uT: t % LOOP });
   draw(mDisp, dispRT, { uSrc: ocean[fft(ocean, N)].texture });
   draw(mCompose, heightRT);
   draw(mSlopes, surfRT);
   draw(mSpec2, ocean2[0], { uT: t % LOOP });
-  draw(mSlopes2, surf2RT, { uSrc: ocean2[fft(ocean2, N2)].texture });
+  draw(mCopy2, surf2RT, { uSrc: ocean2[fft(ocean2, N2)].texture });
 }
 
 /* ---------- caustics: one photon per grid vertex, refracted to a horizontal plane; intensity = area before / after ---------- */
@@ -868,8 +868,9 @@ const int VOL = 10;
 // the sea below the pixel: slope statistics from the spectrum (see SLOPE), the capillaries beyond it, the glint disc
 const vec3 MSL = vec3(${SLOPE.cov.map(x => x.toExponential(4)).join(", ")});   // resolved slope covariance (xx, xz, zz)
 const float S50 = ${SLOPE.s50.toFixed(5)}, G0 = ${SLOPE.g0.toFixed(5)}, P50 = ${SLOPE.p.toFixed(2)}, TEXEL = ${(L / N).toFixed(5)}, CAP = ${LOOK.capillary.toExponential(3)};
-// the swell's patch and slope statistics; the chop's stochastic tiling
+// the swell's patch, slope statistics and blend; the chop's stochastic tiling
 const float PATCH2 = ${L2.toFixed(2)}, S50_2 = ${SLOPE2.s50.toFixed(5)}, G0_2 = ${SLOPE2.g0.toFixed(5)}, P50_2 = ${SLOPE2.p.toFixed(2)}, TEXEL2 = ${(L2 / N2).toFixed(5)};
+const float SWELL0 = ${LOOK.swell.from.toFixed(1)}, SWELL1 = ${LOOK.swell.to.toFixed(1)};
 const vec3 MSL2 = vec3(${SLOPE2.cov.map(x => x.toExponential(4)).join(", ")});
 const float HEX0 = ${LOOK.tiling.from.toFixed(1)}, HEX1 = ${LOOK.tiling.to.toFixed(1)}, HEXK = ${(L / LOOK.tiling.cell).toFixed(4)}, HEXTURN = ${(LOOK.tiling.turn * Math.PI / 90).toFixed(4)};
 const float GLINT = ${LOOK.glint.toFixed(4)}, GL2 = GLINT * GLINT / 16.0, DENS = ${LOOK.facets.toFixed(1)};
@@ -1024,11 +1025,8 @@ void main(){
 
   // ---- the surface: fixed-point intersection with the height field ----
   vec3 wd = rd; wd.y = min(wd.y, -0.0015); wd = normalize(wd);
-  float t = -uCam.y / wd.y;
-  // the swell lifts the chop; over one step it hardly varies. It has no detail across the view, so one trilinear read
-  // at the level of the footprint along the view filters it.
-  float hs = textureLod(uSurf2, (uCam.xz + wd.xz * t) / PATCH2, log2(max(t * uPixAng / -wd.y, 1e-4) / TEXEL2)).x;
-  for (int i = 0; i < 3; i++) t = (surfH(uCam.xz + wd.xz * t) + hs - uCam.y) / wd.y;
+  float t = -uCam.y / wd.y, fs = smoothstep(SWELL0, SWELL1, t);   // the swell's share, by distance over flat water
+  for (int i = 0; i < 3; i++) t = (surfH(uCam.xz + wd.xz * t) - uCam.y) / wd.y;
   vec3 P = uCam + wd * t;
   float dist = t, foot = dist * uPixAng;
   // the 2x2 quad's own distance to the flat sea, the same for its four pixels: branches on it keep derivatives valid
@@ -1036,14 +1034,16 @@ void main(){
   vec3 rq = normalize(uCamRot * (vq.xyz / vq.w));
   float hx = smoothstep(HEX0, HEX1, -uCam.y / min(rq.y, -0.0015));
   // the chop: its patch near the camera (B-spline filtered), stochastically tiled from mid-distance out, where the
-  // map is minified anyway; a blend of the two keeps the variance. Plus its rotated, larger copy, and the swell.
+  // map is minified anyway; a blend of the two keeps the variance. Plus its rotated, larger copy, and far out the swell.
   // (the hexagonal tiling's cells jump in offset, so it takes its footprint from the derivatives of the plain uv)
   vec2 uv = P.xz / PATCH, gx = dFdx(uv), gy = dFdy(uv), sA = vec2(0.0);
   if (hx < 1.0) sA = texBS(uSurf, uv).yz;
   if (hx > 0.0) sA = (sA * (1.0 - hx) + hexSlope(uv, gx, gy) * hx) / sqrt(1.0 - 2.0 * hx + 2.0 * hx * hx);
   vec2 uvB = (SW * P.xz) / (PATCH * SB) + 0.37, sB;
   if (hx < 1.0) sB = texBS(uSurf, uvB).yz; else sB = texture(uSurf, uvB).yz;   // minified along the view by then
-  vec2 slope = sA + WB * (transpose(SW) * sB) + textureLod(uSurf2, P.xz / PATCH2, log2(max(foot / -wd.y, 1e-4) / TEXEL2)).yz;
+  vec2 slope = sA + WB * (transpose(SW) * sB);
+  // the swell has no detail across the view, so one trilinear read at the level of the footprint along it filters it
+  if (fs > 0.0) slope += fs * textureLod(uSurf2, P.xz / PATCH2, log2(max(foot / -wd.y, 1e-4) / TEXEL2)).xy;
   float mf = clamp(1.0 - foot / 0.012, 0.0, 1.0);             // ripples finer than a pixel are left out
   if (mf > 0.0) slope += microSlope(P.xz) * mf;
   vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y)), v = -wd;
@@ -1055,12 +1055,15 @@ void main(){
   float vAl = dot(u, vec2(MSL.x * u.x + MSL.y * u.y, MSL.y * u.x + MSL.z * u.y)), vAc = MSL.x + MSL.z - vAl;
   float wa = foot / max(-wd.y, 1e-3), wm = max(foot, wa * 0.125), tl = max(TEXEL, wm);
   float shA = lostShare(length(vec2(0.48 * wa, 0.8 * tl)), S50, G0, P50), shC = lostShare(length(vec2(0.48 * wm, 0.8 * tl)), S50, G0, P50);
-  // the swell's slopes, with their own spectrum: read at the mip level of the footprint along the view, a mip chain's
-  // box and trilinear filters blur them by about 0.6 of it, both ways
-  float vAl2 = dot(u, vec2(MSL2.x * u.x + MSL2.y * u.y, MSL2.y * u.x + MSL2.z * u.y)), vAc2 = MSL2.x + MSL2.z - vAl2;
-  float shS = lostShare(length(vec2(0.6 * wa, 0.8 * TEXEL2)), S50_2, G0_2, P50_2);
-  float va = (vAl + CAP) * shA + vAl2 * shS + 1e-6, vc = (vAc + CAP) * shC + vAc2 * shS + 1e-6;
-  float rho = (vAl * (1.0 - shA) + vAl2 * (1.0 - shS)) / (vAl + vAl2 + CAP * shA);   // share of the slopes still resolved
+  float va = (vAl + CAP) * shA + 1e-6, vc = (vAc + CAP) * shC + 1e-6, vRes = vAl * (1.0 - shA), vTot = vAl + CAP * shA;
+  if (fs > 0.0){
+    // the swell's slopes, with their own spectrum: read at the mip level of the footprint along the view, a mip
+    // chain's box and trilinear filters blur them by about 0.6 of it, both ways
+    float vAl2 = fs * fs * dot(u, vec2(MSL2.x * u.x + MSL2.y * u.y, MSL2.y * u.x + MSL2.z * u.y)), vAc2 = fs * fs * (MSL2.x + MSL2.z) - vAl2;
+    float shS = lostShare(length(vec2(0.6 * wa, 0.41 * TEXEL2)), S50_2, G0_2, P50_2);
+    va += vAl2 * shS; vc += vAc2 * shS; vRes += vAl2 * (1.0 - shS); vTot += vAl2;
+  }
+  float rho = vRes / vTot;                                  // share of the slopes still resolved
 
   // ---- the facets the eye sees: masking hides those tilted away, so at grazing angles the visible ones lean toward
   // the viewer and mirror higher, darker sky at a gentler Fresnel angle. Exact mean and spread of the visible tilt for
