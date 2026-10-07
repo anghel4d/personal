@@ -1,0 +1,5 @@
+# Cloudflare Pages response headers (other hosts ignore this file). Pages already compresses text with Brotli.
+# The panels' font files rarely change: let browsers keep them for 30 days. Rebuilding them (tools/fonts/build.py)
+# with new outlines should come with new file names.
+/assets/fonts/*
+  Cache-Control: public, max-age=2592000
