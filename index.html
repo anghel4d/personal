@@ -398,6 +398,10 @@ const LOOK = {
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
   capillary: 0.003,                            // slope variance per axis of ripples finer than the FFT (Cox and Munk give
                                                // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
+  moon: { size: 0.018, bright: 0.55, sat: 0.6 }, // the moon's face (assets/moon.webp, a photograph of the full moon): its radius
+                                               // (rad; the real moon's is 0.0045, drawn larger so its face reads), the
+                                               // radiance of its brightest highlands (scene units: near paper white at
+                                               // night's exposure, so the seas and the rays show) and how much colour is kept
   sheen: [0.6, 0.85],                         // where many facets share a pixel their glitter merges into a sheen, whose
                                                // mean at grazing runs to ten times paper white and blooms into a pool of
                                                // light at the horizon; it is pressed down by (1 + L / a)^-b, L its brightness
@@ -565,12 +569,14 @@ const PHONE_F = 406 / Math.tan(Math.PI / 6), PX_PER_CSS = 1.2;
 const GLINT_EL = 30 - Math.atan((1 - 2 * HORIZON) * Math.tan(Math.PI / 6)) * 180 / Math.PI + 3.5;
 // the moon's elevation and azimuth (degrees), and the light of the sun and the moon
 const MOON = [12, -12];
+// the moon's face: a photograph of the full moon, cropped to its disc (256 x 256, rows top down)
+const MOON_TEX = "assets/moon.webp", MOON_TEX_N = 256;
 const SUN_COL = [1.0, 0.95, 0.88].map(c => c * 5.0), MOON_COL = [0.62, 0.78, 0.95].map(c => c * 0.4);
 // lighting derived from the light's direction: refracted beam, flat-water transmission, ambient light under water
 const fresnelJS = c => { const s = Math.sqrt(Math.max(0, 1 - c * c)) / 1.333; if (s >= 1) return 1; const ct = Math.sqrt(1 - s * s);
   const rs = (1.333 * c - ct) / (1.333 * c + ct), rp = (c - 1.333 * ct) / (c + 1.333 * ct); return 0.5 * (rs * rs + rp * rp); };
 const SIG = [0, 1, 2].map(i => [LOOK.sigA[i], LOOK.sigS[i]]);
-return { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, SUN_COL, MOON_COL, fresnelJS, SIG };
+return { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, MOON_TEX, MOON_TEX_N, SUN_COL, MOON_COL, fresnelJS, SIG };
 })());
 </script>
 <script>
@@ -582,7 +588,7 @@ return { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA,
    is GT7's, ported from Polyphony Digital's sample implementation (MIT, see licenses/gt7-tone-mapping.txt). three.js is
    a thin layer over WebGL2 here: every pass is a RawShaderMaterial drawn into a render target. */
 function startGL(){
-const { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, SUN_COL, MOON_COL, fresnelJS, SIG } = lagoon();
+const { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, MOON_TEX, MOON_TEX_N, SUN_COL, MOON_COL, fresnelJS, SIG } = lagoon();
 const root = document.documentElement;
 const noGL = () => root.classList.add("no-gl");
 if (!window.THREE) { noGL(); return; }
@@ -931,6 +937,10 @@ void main(){
 const hashRT = rt(HASH_W, HASH_H, HALF);
 draw(shader(`float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main(){ o = vec4(hash12(floor(gl_FragCoord.xy) + vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0)), 0.0, 0.0, 1.0); }`, {}), hashRT);
+// the moon's photograph, mipmapped; a flat grey until it arrives
+const moonTex = new THREE.DataTexture(new Uint8Array([200, 200, 200, 255]), 1, 1); moonTex.needsUpdate = true;
+{ const img = new Image(); img.onload = () => { const t = new THREE.Texture(img); t.flipY = false; t.encoding = THREE.sRGBEncoding;
+    t.minFilter = THREE.LinearMipmapLinearFilter; t.needsUpdate = true; mWater.uniforms.uMoon.value = t; }; img.src = MOON_TEX; }
 const noiseTex = new THREE.DataTexture(NOISE_DATA, NOISE_N, NOISE_N, THREE.RGFormat, THREE.UnsignedByteType);
 noiseTex.wrapS = noiseTex.wrapT = THREE.RepeatWrapping; noiseTex.magFilter = noiseTex.minFilter = THREE.LinearFilter; noiseTex.needsUpdate = true;
 const NOISE_GLSL = `
@@ -998,6 +1008,19 @@ vec3 disc(vec3 d, float cone){
   float r = max(mix(0.0105, 0.012, uNight), cone);
   float ang = acos(clamp(dot(d, uGlint), -1.0, 1.0));
   return uSunCol * smoothstep(r * 1.2, r * 0.8, ang) / (PI * r * r);
+}
+// the moon: its photograph on the disc, sharp edged, its highlands near paper white at night so the seas show
+uniform sampler2D uMoon;
+vec3 moonFace(vec3 d){
+  float r = ${LOOK.moon.size.toFixed(4)};
+  vec3 e = normalize(cross(uGlint, vec3(0.0, 1.0, 0.0))), u = cross(e, uGlint);
+  vec2 p = vec2(dot(d, e), dot(d, u)) / r;
+  if (dot(d, uGlint) <= 0.0 || dot(p, p) > 1.5) return vec3(0.0);
+  float rr = length(p), aa = uPixAng / r;
+  float edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, rr);
+  vec3 c = textureLod(uMoon, p * vec2(0.5, -0.5) + 0.5, log2(max(${MOON_TEX_N}.0 * 0.5 * aa, 1.0))).rgb;
+  c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, ${LOOK.moon.sat.toFixed(3)});
+  return c * (${LOOK.moon.bright.toFixed(3)} * edge);
 }
 // the share of the resolved slope variance a filter of width w (m) removes: fitted to each spectrum, x^p / (1 + x^p)
 // with x = w / s50, counted from the finest footprint the map is ever sampled at (g0, at 0.8 texel)
@@ -1124,7 +1147,7 @@ void main(){
   float hz = smoothstep(-0.0005, 0.0015, rd.y);
   vec3 skyc = vec3(0.0);
   if (hz > 0.0){
-    skyc = skyRadiance(rd) + uNight * min(disc(rd, 0.0), vec3(14.0));   // the moon's disc; the glint sun's never shows
+    skyc = skyRadiance(rd) + uNight * moonFace(rd);   // the moon; the glint sun's disc never shows
     vec2 sp = floor(gl_FragCoord.xy / 1.5 + vec2(11.0, 7.0));
     float st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += uNight * st * 0.2 * (0.65 + 0.35 * sin(uTime * 1.7 + hash12(sp + 3.1) * 40.0));
@@ -1242,7 +1265,7 @@ void main(){
   col = mix(col, hazeCol(), HAZE * (1.0 - exp(-dist / ${LOOK.fog.toFixed(1)})));
   o = vec4(max(mix(col, skyc, hz), 0.0), 1.0);
 }`, {
-  uSurf: surfRT.texture, uSurf2: surf2RT.texture, uFloor: floorRT.texture, uHash: hashRT.texture, uNoise: noiseTex, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
+  uMoon: moonTex, uSurf: surfRT.texture, uSurf2: surf2RT.texture, uFloor: floorRT.texture, uHash: hashRT.texture, uNoise: noiseTex, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
   uCam: camera.position, uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uLw: light.lw, uCausK: light.causK, uAmb: light.amb,
   uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uRes: res,
   uTime: 0, uNight: 0, uPixAng: 0.001, uExposure: 1
@@ -1275,8 +1298,9 @@ void main(){
 }`, { tIn: null, tBase: null, uTexel: new THREE.Vector2() });
 const mFinal = shader(`
 uniform sampler2D tHDR, tBloom; uniform float uExposure, uNight, uBlurPx, uHazeV, uHazeS, uHazeG; uniform int uFrame;
-uniform vec3 uAir; uniform mat3 uCamRot, uGrade; uniform mat4 uInvProj;
+uniform vec3 uAir, uGlint; uniform mat3 uCamRot, uGrade; uniform mat4 uInvProj;
 const float HZ_UP = ${HZ.up.toFixed(6)}, HZ_DOWN = ${HZ.down.toFixed(6)};
+const float MOON_Q1 = ${(2 * LOOK.moon.size ** 2).toExponential(4)}, MOON_Q2 = ${(8 * LOOK.moon.size ** 2).toExponential(4)};   // 1 - cos of 2 and 4 moon radii
 // the frame blurred by a Gaussian of about 0.6 * 2^lod pixels: each of the two nearest mip levels read with a cubic
 // B-spline in four bilinear taps, on its own grid, then blended. Same cost for any radius; the GPU builds the mips.
 vec3 bspline(vec2 uv, int lv){
@@ -1338,7 +1362,7 @@ void main(){
   // The eye's ray through this pixel. With the camera fixed above a flat sea, its elevation is all that the haze
   // and the defocus depend on.
   vec4 vp = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
-  float sy = normalize(uCamRot * (vp.xyz / vp.w)).y;                       // sin(elevation)
+  vec3 rdir = normalize(uCamRot * (vp.xyz / vp.w)); float sy = rdir.y;     // sin(elevation)
   // Haze: the optical depth of a hazy layer seen at this elevation goes as 1 / (sin e + s0), capped at the horizon
   // (Chapman); s0 sets the band's half-height, narrower below the horizon, where the far sea mirrors the hazy low sky.
   // The scattered share 1 - exp(-tau) becomes airlight (the veil), a little softening, and a wide forward-scatter glow
@@ -1346,12 +1370,15 @@ void main(){
   float s0 = sy >= 0.0 ? HZ_UP : HZ_DOWN, f = 1.0 - exp(-3.0 * s0 / (abs(sy) + s0));
   // Defocus of a slightly short-sighted eye: sharp to its far point, then a disc that grows with 1/far - 1/distance;
   // a disc of diameter D spreads like a Gaussian of D / 4. The two blurs add in quadrature: one lookup for both.
-  float dof = 0.25 * uBlurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0), hb = uHazeS * f;
+  // At night the eye looks at the moon: no defocus within two moon radii of it, full defocus from four.
+  float onMoon = uNight * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, uGlint)));
+  float dof = 0.25 * uBlurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon), hb = uHazeS * f;
   float sig = sqrt(dof * dof + hb * hb);
   vec3 c;
   if (sig > 0.6) c = blurred(vUv, log2(sig / 0.6));
   else {
-    c = vec3(texture(tHDR, vUv - d * 0.0018).r, texture(tHDR, vUv).g, texture(tHDR, vUv + d * 0.0018).b);
+    vec2 ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                         // only a gentle colour fringe on the moon the eye looks at
+    c = vec3(texture(tHDR, vUv - ca).r, texture(tHDR, vUv).g, texture(tHDR, vUv + ca).b);
     if (sig > 0.15) c = mix(c, blurred(vUv, 0.0), sig / 0.6);      // below 0.15 px a blur cannot be seen
   }
   c = mix(c, uAir, uHazeV * f);                                            // airlight
@@ -1362,7 +1389,7 @@ void main(){
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
 }`, { tHDR: null, tBloom: null, uExposure: 1.2, uNight: 0, uFrame: 0, uBlurPx: 0, uHazeV: 0, uHazeS: 0, uHazeG: 0,
-  uAir: new THREE.Vector3(), uGrade: new THREE.Matrix3(), uCamRot: camRot, uInvProj: camera.projectionMatrixInverse });
+  uAir: new THREE.Vector3(), uGrade: new THREE.Matrix3(), uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uGlint: light.glint });
 
 const hdrRT = rt(1, 1, HALF, { mip: true });   // mipmapped: the defocus reads its levels
 let bloom = [];
@@ -1539,7 +1566,7 @@ raf = requestAnimationFrame(tick);
 async function startGPU(canvas){
 const { LOOK, N, L, DBED, SEA, RMS, CHOPK, LOOP, DVOL, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE,
         SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F,
-        PX_PER_CSS, GLINT_EL, MOON, SUN_COL, MOON_COL, fresnelJS, SIG } = lagoon();
+        PX_PER_CSS, GLINT_EL, MOON, MOON_TEX, MOON_TEX_N, SUN_COL, MOON_COL, fresnelJS, SIG } = lagoon();
 if (!navigator.gpu) throw new Error("no WebGPU");
 const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
 if (!adapter) throw new Error("no WebGPU adapter");
@@ -1872,6 +1899,7 @@ const waterWGSL = `diagnostic(off, derivative_uniformity);` + FRAME + SKY + VIEW
 @group(0) @binding(12) var sClamp: sampler;
 @group(0) @binding(13) var tSky: texture_2d<f32>;
 @group(0) @binding(14) var tVol: texture_3d<f32>;
+@group(0) @binding(15) var tMoon: texture_2d<f32>;
 const PATCH = ${L.toFixed(2)}; const DBED = ${DBED.toFixed(2)}; const DVOL = ${DVOL.toFixed(2)};
 const SIG_A = ${v3(LOOK.sigA)}; const SIG_S = ${v3(LOOK.sigS)};
 const SIG_T = SIG_A + SIG_S;
@@ -1906,6 +1934,18 @@ fn vnoise3T(p: vec3f) -> f32 {
   let i = floor(p); var u = fract(p); u = u * u * (3.0 - 2.0 * u);
   let rg = textureSampleLevel(tNoise, sRep, (wrapN(i.xy + vec2f(37.0, 17.0) * i.z) + u.xy + 0.5) / NOISE_N, 0.0).rg;
   return mix(rg.x, rg.y, u.z);
+}
+// the moon: its photograph on the disc, sharp edged, its highlands near paper white at night so the seas show
+fn moonFace(d: vec3f) -> vec3f {
+  let r = ${LOOK.moon.size.toFixed(4)};
+  let e = normalize(cross(F.glint, vec3f(0.0, 1.0, 0.0))); let u = cross(e, F.glint);
+  let p = vec2f(dot(d, e), dot(d, u)) / r;
+  if (dot(d, F.glint) <= 0.0 || dot(p, p) > 1.5) { return vec3f(0.0); }
+  let rr = length(p); let aa = F.pixAng / r;
+  let edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, rr);
+  var c = textureSampleLevel(tMoon, sClamp, p * vec2f(0.5, -0.5) + 0.5, log2(max(${MOON_TEX_N}.0 * 0.5 * aa, 1.0))).rgb;
+  c = mix(vec3f(dot(c, vec3f(0.2126, 0.7152, 0.0722))), c, ${LOOK.moon.sat.toFixed(3)});
+  return c * (${LOOK.moon.bright.toFixed(3)} * edge);
 }
 fn ign(p0: vec2f, f: i32) -> f32 { let p = p0 + 5.588238 * f32(f % 64); return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
 fn hg(c: f32, g: f32) -> f32 { let g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5)); }
@@ -2020,7 +2060,7 @@ fn bedAlb(xz: vec2f, dist: f32) -> Bed {
     let sk = textureSampleLevel(tSky, sClamp, fc / (2.0 * vec2f(textureDimensions(tSky))), 0.0);
     skyc = sk.rgb;
     if (sk.a > 0.002 && sk.a < 0.998) { skyc = skyRadiance(rd); }
-    if (F.night > 0.0) { skyc += F.night * min(disc(rd, 0.0), vec3f(14.0)); }
+    if (F.night > 0.0) { skyc += F.night * moonFace(rd); }
     let sp = floor(fc / 1.5 + vec2f(11.0, 7.0));
     let st = step(0.9991, hash12(sp * 1.37 + 0.71)) * smoothstep(0.02, 0.35, rd.y);
     skyc += F.night * st * 0.2 * (0.65 + 0.35 * sin(F.time * 1.7 + hash12(sp + 3.1) * 40.0));
@@ -2161,6 +2201,7 @@ const finalWGSL = FRAME + `
 @group(0) @binding(2) var tBloom: texture_2d<f32>;
 @group(0) @binding(3) var sClamp: sampler;
 const HZ_UP = ${HZ.up.toFixed(6)}; const HZ_DOWN = ${HZ.down.toFixed(6)};
+const MOON_Q1 = ${(2 * LOOK.moon.size ** 2).toExponential(4)}; const MOON_Q2 = ${(8 * LOOK.moon.size ** 2).toExponential(4)};   // 1 - cos of 2 and 4 moon radii
 struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VO {     // the canvas: its row 0 is the top of the screen
   let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
@@ -2219,14 +2260,17 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   let fc = vec2f(i.pos.x, F.res.y - i.pos.y);           // WebGL's gl_FragCoord, counted from the bottom
   let d = i.uv - 0.5;
   let vp = F.invProj * vec4f(i.uv * 2.0 - 1.0, -1.0, 1.0);
-  let sy = normalize(F.camRot * (vp.xyz / vp.w)).y;
+  let rdir = normalize(F.camRot * (vp.xyz / vp.w)); let sy = rdir.y;
   let s0 = select(HZ_DOWN, HZ_UP, sy >= 0.0); let f = 1.0 - exp(-3.0 * s0 / (abs(sy) + s0));
-  let dof = 0.25 * F.blurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0); let hb = F.hazeS * f;
+  // at night the eye looks at the moon: no defocus within two moon radii of it, full defocus from four
+  let onMoon = F.night * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, F.glint)));
+  let dof = 0.25 * F.blurPx * max(1.0 + sy * ${(LOOK.myopia.sharp / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon); let hb = F.hazeS * f;
   let sig = sqrt(dof * dof + hb * hb);
   var c: vec3f;
   if (sig > 0.6) { c = blurred(i.uv, log2(sig / 0.6)); }
   else {
-    c = vec3f(textureSampleLevel(tHDR, sClamp, i.uv - d * 0.0018, 0.0).r, textureSampleLevel(tHDR, sClamp, i.uv, 0.0).g, textureSampleLevel(tHDR, sClamp, i.uv + d * 0.0018, 0.0).b);
+    let ca = d * (0.0018 * (1.0 - 0.65 * onMoon));                           // only a gentle colour fringe on the moon the eye looks at
+    c = vec3f(textureSampleLevel(tHDR, sClamp, i.uv - ca, 0.0).r, textureSampleLevel(tHDR, sClamp, i.uv, 0.0).g, textureSampleLevel(tHDR, sClamp, i.uv + ca, 0.0).b);
     if (sig > 0.15) { c = mix(c, blurred(i.uv, 0.0), sig / 0.6); }
   }
   c = mix(c, F.air, F.hazeV * f);
@@ -2295,6 +2339,16 @@ const disp = tex(N, N, HDR, STORE), surf = tex(N, N, HDR, STORE, mipsOf(N, N)), 
 const floorT = tex(FLOOR_RES, FLOOR_RES, HDR, TARGET, mipsOf(FLOOR_RES, FLOOR_RES));
 const sliceT = [0, 1].map(() => tex(SLICE_RES, SLICE_RES, HDR, TARGET, mipsOf(SLICE_RES, SLICE_RES)));
 const envT = tex(ENV_W, ENV_H, HDR, TARGET, mipsOf(ENV_W, ENV_H));
+// the moon's photograph, with its mip chain; a flat grey until it arrives
+const moonT = tex(MOON_TEX_N, MOON_TEX_N, "rgba8unorm-srgb", TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT, mipsOf(MOON_TEX_N, MOON_TEX_N));
+for (let l = 0, n = MOON_TEX_N; l < moonT.mipLevelCount; l++, n = Math.max(1, n >> 1))
+  device.queue.writeTexture({ texture: moonT, mipLevel: l }, new Uint8Array(n * n * 4).fill(200), { bytesPerRow: n * 4 }, [n, n]);
+fetch(MOON_TEX).then(r => r.blob()).then(async b => {
+  for (let l = 0, n = MOON_TEX_N; l < moonT.mipLevelCount; l++, n = Math.max(1, n >> 1)){
+    const bm = await createImageBitmap(b, { resizeWidth: n, resizeHeight: n, resizeQuality: "high" });
+    device.queue.copyExternalImageToTexture({ source: bm }, { texture: moonT, mipLevel: l }, [n, n]);
+  }
+}).catch(() => {});
 const volT = device.createTexture({ size: [SLICE_RES, SLICE_RES, SLICES], dimension: "3d", format: HDR, usage: STORE });
 const hashT = tex(HASH_W, HASH_H, HDR, STORE);
 const noiseT = tex(NOISE_N, NOISE_N, "rg8unorm", TU.TEXTURE_BINDING | TU.COPY_DST);
@@ -2348,7 +2402,7 @@ function sizeTargets(w, h){
     if (Math.min(bw, bh) <= 8) break;
   }
   gWater = bg(waterP, { 0: { buffer: frameU }, 1: surf.createView(), 2: surf2.createView(), 3: floorT.createView(), 6: envT.createView(),
-    7: hashT.createView(), 8: noiseT.createView(), 9: sAniso, 10: sRep, 11: sEnv, 12: sClamp, 13: skyT.createView(), 14: volT.createView() });
+    7: hashT.createView(), 8: noiseT.createView(), 9: sAniso, 10: sRep, 11: sEnv, 12: sClamp, 13: skyT.createView(), 14: volT.createView(), 15: moonT.createView() });
   gHdrMips = mipChain(hdrT);
   gBloom = [];
   for (let i = 0; i < bloom.length; i++)
