@@ -398,14 +398,15 @@ const LOOK = {
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
   capillary: 0.003,                            // slope variance per axis of ripples finer than the FFT (Cox and Munk give
                                                // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
-  moon: { size: 0.018, bright: 0.55, sat: 0.6 }, // the moon's face (assets/moon.webp, a photograph of the full moon): its radius
+  moon: { size: 0.028, bright: 0.55, sat: 0.6 }, // the moon's face (assets/moon.webp, a photograph of the full moon): its radius
                                                // (rad; the real moon's is 0.0045, drawn larger so its face reads), the
                                                // radiance of its brightest highlands (scene units: near paper white at
                                                // night's exposure, so the seas and the rays show) and how much colour is kept
-  sheen: [0.6, 0.85],                         // where many facets share a pixel their glitter merges into a sheen, whose
-                                               // mean at grazing runs to ten times paper white and blooms into a pool of
-                                               // light at the horizon; it is pressed down by (1 + L / a)^-b, L its brightness
-                                               // on screen (scene times exposure; paper white 2.5). Lone sparkles keep theirs
+  sheen: { a: 0.6, b: 0.85, sparks: 0.6 },    // at night only: where many facets share a pixel the moon's glitter merges into
+                                               // a sheen whose mean at grazing runs to ten times paper white, a pool of light
+                                               // at the horizon. Its mean is pressed down by (1 + L / a)^-b, L its brightness
+                                               // on screen (scene times exposure; paper white 2.5), and it is drawn as at
+                                               // most `sparks` glints per pixel, so the far path twinkles. By day, as is
   facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
   exposure: 1.5,                               // scene to GT7 frame-buffer units (1.0 = 100 nits)
@@ -990,7 +991,7 @@ const float SWELL0 = ${LOOK.swell.from.toFixed(1)}, SWELL1 = ${LOOK.swell.to.toF
 const vec3 MSL2 = vec3(${SLOPE2.cov.map(x => x.toExponential(4)).join(", ")});
 const float HEX0 = ${LOOK.tiling.from.toFixed(1)}, HEX1 = ${LOOK.tiling.to.toFixed(1)}, HEXK = ${(L / LOOK.tiling.cell).toFixed(4)}, HEXTURN = ${(LOOK.tiling.turn * Math.PI / 90).toFixed(4)};
 const float GLINT = ${LOOK.glint.toFixed(4)}, GL2 = GLINT * GLINT / 16.0, DENS = ${LOOK.facets.toFixed(1)};
-const float SHEEN_A = ${LOOK.sheen[0].toFixed(3)}, SHEEN_B = ${LOOK.sheen[1].toFixed(3)};
+const float SHEEN_A = ${LOOK.sheen.a.toFixed(3)}, SHEEN_B = ${LOOK.sheen.b.toFixed(3)}, SPARKS = ${LOOK.sheen.sparks.toFixed(3)};
 
 float ign(vec2 p, int f){ p += 5.588238 * float(f % 64); return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 float hg(float c, float g){ float g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5)); }
@@ -1233,12 +1234,14 @@ void main(){
     if (hn > 0.3 && q < 14.0){
       float D = exp(-q) / (2.0 * PI * sqrt(a2 * c2) * hn * hn * hn * hn);
       float vis = D / (4.0 * max(cv, 1e-3) * (1.0 + (phi - tq * (1.0 - Phi)) / max(tq, 1e-4)));
-      float lam = (1.0 - rho) * vis * PI * GLINT * GLINT * max(DENS * foot * wa, 1.0);
+      float lam0 = (1.0 - rho) * vis * PI * GLINT * GLINT * max(DENS * foot * wa, 1.0);
+      // at night the moon's far path stays a path of sparkles: at most SPARKS glints to the pixel, each brighter
+      float lam = min(lam0, SPARKS / max(uNight, 1e-4));
       float k = poisson(lam, hash13(vec3(gl_FragCoord.xy, floor(mod(uTime, 600.0) * 12.0 + 7.0 * hash12(gl_FragCoord.xy)))));
-      vec3 gl = uSunCol * fresnelDielectric(dot(v, h), 1.0, 1.333) * (1.0 - rho) * vis * k / max(lam, 1e-9);
-      // the sheen (many facets to the pixel, lam above 0.5 to 4) is pressed down to about paper white on screen
-      gl *= mix(1.0, pow(1.0 + dot(gl, vec3(0.2126, 0.7152, 0.0722)) * uExposure / SHEEN_A, -SHEEN_B), smoothstep(0.5, 4.0, lam));
-      glint += gl;
+      vec3 m = uSunCol * fresnelDielectric(dot(v, h), 1.0, 1.333) * (1.0 - rho) * vis;
+      // and its sheen's mean (many facets to the pixel) is pressed down to about paper white on screen
+      m *= mix(1.0, pow(1.0 + dot(m, vec3(0.2126, 0.7152, 0.0722)) * uExposure / SHEEN_A, -SHEEN_B), uNight * smoothstep(0.5, 4.0, lam0));
+      glint += m * k / max(lam, 1e-9);
     }
   }
 
@@ -1916,7 +1919,7 @@ const SWELL0 = ${LOOK.swell.from.toFixed(1)}; const SWELL1 = ${LOOK.swell.to.toF
 const MSL2 = vec3f(${SLOPE2.cov.map(x => x.toExponential(4)).join(", ")});
 const HEX0 = ${LOOK.tiling.from.toFixed(1)}; const HEX1 = ${LOOK.tiling.to.toFixed(1)}; const HEXK = ${(L / LOOK.tiling.cell).toFixed(4)}; const HEXTURN = ${(LOOK.tiling.turn * Math.PI / 90).toFixed(4)};
 const GLINT = ${LOOK.glint.toFixed(4)}; const GL2 = GLINT * GLINT / 16.0; const DENS = ${LOOK.facets.toFixed(1)};
-const SHEEN_A = ${LOOK.sheen[0].toFixed(3)}; const SHEEN_B = ${LOOK.sheen[1].toFixed(3)};
+const SHEEN_A = ${LOOK.sheen.a.toFixed(3)}; const SHEEN_B = ${LOOK.sheen.b.toFixed(3)}; const SPARKS = ${LOOK.sheen.sparks.toFixed(3)};
 const HASH_O = vec2f(${HASH_O[0]}.0, ${HASH_O[1]}.0); const HASH_S = vec2f(${HASH_W}.0, ${HASH_H}.0); const NOISE_N = ${NOISE_N}.0;
 
 fn vnoiseL(p: vec2f) -> f32 {
@@ -2128,13 +2131,15 @@ fn bedAlb(xz: vec2f, dist: f32) -> Bed {
     if (hn > 0.3 && q < 14.0) {
       let D = exp(-q) / (2.0 * PI * sqrt(a2 * c2) * hn * hn * hn * hn);
       let vis = D / (4.0 * max(cv, 1e-3) * (1.0 + (phi - tq * (1.0 - Phi)) / max(tq, 1e-4)));
-      let lam = (1.0 - rho) * vis * PI * GLINT * GLINT * max(DENS * foot * wa, 1.0);
+      let lam0 = (1.0 - rho) * vis * PI * GLINT * GLINT * max(DENS * foot * wa, 1.0);
+      // at night the moon's far path stays a path of sparkles: at most SPARKS glints to the pixel, each brighter
+      let lam = min(lam0, SPARKS / max(F.night, 1e-4));
       let tm = F.time - 600.0 * floor(F.time / 600.0);
       let kk = poisson(lam, hash13(vec3f(fc, floor(tm * 12.0 + 7.0 * hash12(fc)))));
-      var gl = F.sunCol * fresnelDielectric(dot(v, h), 1.0, 1.333) * (1.0 - rho) * vis * kk / max(lam, 1e-9);
-      // the sheen (many facets to the pixel, lam above 0.5 to 4) is pressed down to about paper white on screen
-      gl *= mix(1.0, pow(1.0 + dot(gl, vec3f(0.2126, 0.7152, 0.0722)) * F.exposure / SHEEN_A, -SHEEN_B), smoothstep(0.5, 4.0, lam));
-      glint += gl;
+      var m = F.sunCol * fresnelDielectric(dot(v, h), 1.0, 1.333) * (1.0 - rho) * vis;
+      // and its sheen's mean (many facets to the pixel) is pressed down to about paper white on screen
+      m *= mix(1.0, pow(1.0 + dot(m, vec3f(0.2126, 0.7152, 0.0722)) * F.exposure / SHEEN_A, -SHEEN_B), F.night * smoothstep(0.5, 4.0, lam0));
+      glint += m * kk / max(lam, 1e-9);
     }
   }
   // ---- into the water: volume, then the bed ----
