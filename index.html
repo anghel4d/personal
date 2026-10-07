@@ -1557,11 +1557,12 @@ function lighting(n){
 }
 
 /* Frames are capped at 30 a second (15 under a panel). The target: the GPU finishes each frame in under about
-   55% of that budget. A fence after every frame tells how long the GPU took; resolution steps down when a frame
-   is still running as the next one is due, and creeps back up after three seconds of comfortable frames. */
+   55% of that budget. A fence tells how long the GPU took, to within a display refresh; the render scale steps down
+   by a fifth after three frames that ran past their slot, and creeps back up after three seconds of comfortable
+   frames. */
 const FRAME_MS = 1000 / 30, gl = renderer.getContext();
 let clock = 0, lastDraw = -1, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
-let fence = null, fenceT = 0, gpuMs = 0, overN = 0, underN = 0;
+let fence = null, fenceT = 0, gpuMs = 0, lateN = 0, underN = 0;
 let envAt = -1, envNight = -1;
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
@@ -1578,10 +1579,9 @@ function tick(now){
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (fence && now - fenceT > 1000){ gl.deleteSync(fence); fence = null; }          // a fence that never signals tells nothing
   if (!S.open){
-    if (fence){ overN++; underN = 0; }
-    else if (gpuMs < FRAME_MS * 0.55){ underN++; overN = Math.max(0, overN - 1); }
-    else { underN = 0; overN = Math.max(0, overN - 1); }
-    if (overN > 8 && quality > 0.5){ quality = Math.max(0.5, quality * 0.85); overN = 0; frame(); }
+    lateN = fence || gpuMs > FRAME_MS + 4 ? lateN + 1 : 0;     // still running, or last seen done a refresh too late
+    underN = !fence && gpuMs < FRAME_MS * 0.55 ? underN + 1 : 0;
+    if (lateN >= 3 && quality > 0.5){ quality = Math.max(0.5, quality * 0.8); lateN = 0; frame(); }
     else if (underN > 90 && quality < 1.0){ quality = Math.min(1.0, quality * 1.08); underN = 0; frame(); }
   }
   // the clock follows real elapsed time, so the water moves at the same pace at any frame rate
@@ -2341,7 +2341,8 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   let sig = sqrt(dof * dof + hb * hb);
   // per channel: from 0.6 px a mip level (level 0's B-spline is a Gaussian of 0.6 px); from 0.15 to 0.6 px a blend
   // from the frame itself to level 0; below 0.15 px a blur cannot be seen
-  let m = select(log2(max(sig, vec3f(0.6)) / 0.6), clamp((sig - 0.15) / 0.45, vec3f(0.0), vec3f(1.0)) - 1.0, sig < vec3f(0.6));
+  let m = min(select(log2(max(sig, vec3f(0.6)) / 0.6), clamp((sig - 0.15) / 0.45, vec3f(0.0), vec3f(1.0)) - 1.0, sig < vec3f(0.6)),
+              vec3f(f32(textureNumLevels(tHDR)) - 2.0));                // the chain's last level is as far as it reads
   var c: vec3f;
   if (m.b > -1.0) { c = blurred(i.uv, m); } else { c = F.grade * textureSampleLevel(tHDR, sClamp, i.uv, 0.0).rgb; }
   c = mix(c, F.air, F.hazeV * f);                                          // the airlight, graded on the CPU
@@ -2407,8 +2408,10 @@ const upload = (sp, n) => { const t = tex(n, n, "rgba32float", TU.TEXTURE_BINDIN
 const h0 = upload(H0_DATA, N), h0s = upload(H0S_DATA, N2);
 const lines = device.createBuffer({ size: N * N * 16, usage: BU.STORAGE }), lines2 = device.createBuffer({ size: N2 * N2 * 16, usage: BU.STORAGE });
 const disp = tex(N, N, HDR, STORE), surf = tex(N, N, HDR, STORE, mipsOf(N, N)), surf2 = tex(N2, N2, HDR, STORE, mipsOf(N2, N2));
-const floorT = tex(FLOOR_RES, FLOOR_RES, HDR, TARGET, mipsOf(FLOOR_RES, FLOOR_RES));
-const sliceT = [0, 1].map(() => tex(SLICE_RES, SLICE_RES, HDR, TARGET, mipsOf(SLICE_RES, SLICE_RES)));
+// mip chains hold only the levels the shaders read: the water reads the bed map to level 6, the volume the slices'
+// level 3, and the final pass the HDR frame's to level 5 at most (HDR_LEVELS)
+const floorT = tex(FLOOR_RES, FLOOR_RES, HDR, TARGET, 7);
+const sliceT = [0, 1].map(() => tex(SLICE_RES, SLICE_RES, HDR, TARGET, 4));
 const envT = tex(ENV_W, ENV_H, HDR, TARGET, mipsOf(ENV_W, ENV_H));
 // the moon's photograph, with its mip chain; a flat grey until it arrives
 const moonT = tex(MOON_TEX_N, MOON_TEX_N, "rgba8unorm-srgb", TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT, mipsOf(MOON_TEX_N, MOON_TEX_N));
@@ -2421,6 +2424,7 @@ fetch(MOON_TEX).then(r => r.blob()).then(async b => {
   }
 }).catch(() => {});
 const volT = device.createTexture({ size: [SLICE_RES, SLICE_RES, SLICES], dimension: "3d", format: HDR, usage: STORE });
+const envView = level(envT, 0), floorView = level(floorT, 0), sliceView = sliceT.map(t => level(t, 0));   // what the passes draw into
 const hashT = tex(HASH_W, HASH_H, HDR, STORE);
 const noiseT = tex(NOISE_N, NOISE_N, "rg8unorm", TU.TEXTURE_BINDING | TU.COPY_DST);
 device.queue.writeTexture({ texture: noiseT }, NOISE_DATA, { bytesPerRow: NOISE_N * 2 }, [NOISE_N, NOISE_N]);
@@ -2459,13 +2463,15 @@ device.queue.writeBuffer(firstU, 0, new Uint32Array([1, 0, 0, 0])); device.queue
   p.dispatchWorkgroups(Math.ceil(HASH_W / 8), Math.ceil(HASH_H / 8)); p.end(); device.queue.submit([enc.finish()]); }
 
 // the frame-sized targets, rebuilt with the size
-let hdrT = null, skyT = null, bloom = [], gWater = null, gHdrMips = [], gBloom = [], gFinal = null, W = 0, H = 0;
+let hdrT = null, skyT = null, hdrView = null, skyView = null, bloom = [], gWater = null, gHdrMips = [], gBloom = [], gFinal = null, W = 0, H = 0;
+const HDR_LEVELS = 7;
 function sizeTargets(w, h){
   W = w; H = h;
   if (hdrT){ hdrT.destroy(); skyT.destroy(); }
   for (const b of bloom){ b.d.destroy(); b.u.destroy(); }
-  hdrT = tex(W, H, HDR, TARGET, mipsOf(W, H));
+  hdrT = tex(W, H, HDR, TARGET, Math.min(mipsOf(W, H), HDR_LEVELS));
   skyT = tex(Math.ceil(W / 2), Math.ceil(H / 2), HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING);
+  hdrView = level(hdrT, 0); skyView = skyT.createView();
   bloom = [];
   for (let i = 1; i <= 6; i++){
     const bw = Math.max(1, W >> i), bh = Math.max(1, H >> i);
@@ -2520,12 +2526,12 @@ function encodeFrame(enc, t, env){
   p.end();
   // the sky map
   if (env !== -1){
-    const r = enc.beginRenderPass({ label: "sky map", ...stamp(1), colorAttachments: [{ view: level(envT, 0), loadOp: env === "all" ? "clear" : "load", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
+    const r = enc.beginRenderPass({ label: "sky map", ...stamp(1), colorAttachments: [{ view: envView, loadOp: env === "all" ? "clear" : "load", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
     if (env !== "all") r.setScissorRect(0, env * ENV_H / 4, ENV_W, ENV_H / 4);
     r.setPipeline(envP); r.setBindGroup(0, gEnv); r.draw(3); r.end();
   }
   // the visible sky, at half resolution
-  { const r = enc.beginRenderPass({ label: "sky", ...stamp(2), colorAttachments: [{ view: skyT.createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
+  { const r = enc.beginRenderPass({ label: "sky", ...stamp(2), colorAttachments: [{ view: skyView, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
     r.setPipeline(skyP); r.setBindGroup(0, gSky); r.draw(3); r.end(); }
   // caustics: the bed (three colours), then the slices, four to a map
   const caus = (view, from, to) => {
@@ -2534,13 +2540,13 @@ function encodeFrame(enc, t, env){
     for (let i = from; i < to; i++){ const g = draws[i].grid; r.setVertexBuffer(0, g.vb); r.setIndexBuffer(g.ib, "uint32"); r.setBindGroup(0, gCaus[i]); r.drawIndexed(g.count); }
     r.end();
   };
-  caus(level(floorT, 0), 0, 3); caus(level(sliceT[0], 0), 3, 7); caus(level(sliceT[1], 0), 7, 11);
+  caus(floorView, 0, 3); caus(sliceView[0], 3, 7); caus(sliceView[1], 7, 11);
   p = enc.beginComputePass({ label: "map mips", ...stamp(4) });
   runMips(p, gOcean.floorMips); runMips(p, gOcean.sliceMips[0]); runMips(p, gOcean.sliceMips[1]); if (env === "all" || env === 3) runMips(p, gOcean.envMips);
   p.setPipeline(volP); p.setBindGroup(0, gVol); p.dispatchWorkgroups(SLICE_RES / 8, SLICE_RES / 8, SLICES);
   p.end();
   // the water
-  const r = enc.beginRenderPass({ label: "water", ...stamp(5), colorAttachments: [{ view: level(hdrT, 0), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+  const r = enc.beginRenderPass({ label: "water", ...stamp(5), colorAttachments: [{ view: hdrView, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
   r.setPipeline(waterP); r.setBindGroup(0, gWater); r.draw(3); r.end();
   // the HDR frame's mips and the bloom
   p = enc.beginComputePass({ label: "post", ...stamp(6) });
@@ -2679,12 +2685,20 @@ function uniforms(t, n, frameNo, cam, mw){
   device.queue.writeBuffer(drawU, 0, drawF);
 }
 
-/* Frames are capped at 30 a second (15 under a panel). The GPU reports when each frame's work is done; resolution
-   steps down when a frame is still running as the next one is due, and creeps back up after three seconds of
-   comfortable frames. */
+/* Frames are capped at 30 a second (15 under a panel). The GPU reports when each frame's work is done, so each
+   frame's GPU time is known: from its submission, or from the end of the frame before if the GPU was still busy with
+   that one. When frames run long, the render scale is set straight to what the measured time says fits in half the
+   budget (part of the cost is fixed, the sea and the caustics; the rest goes with the pixels), so a slow device
+   settles within a few frames; after three seconds of comfortable frames it creeps back up, if the same model says the
+   larger frame fits. The GPU is never more than two frames behind. */
 const FRAME_MS = 1000 / 30;
 let clock = 0, lastDraw = -1, nextDraw = 0, running = true, frameNo = 0, raf = 0;
-let pending = false, pendT = 0, gpuMs = 0, overN = 0, underN = 0, envAt = -1, envNight = -1, envBand = -1, dead = false;
+let inFlight = 0, lastDone = 0, gpuMs = 0, lateN = 0, underN = 0, settle = 3, envAt = -1, envNight = -1, envBand = -1, dead = false;
+const gpuLog = [];
+// the frame's cost at render scale q, in units of its per-pixel part at full scale: FIXED_PX / (pixels at full
+// scale) + q^2, with FIXED_PX the fixed part's cost in full-scale pixels (about 130,000 by the shader-cost estimates)
+const FIXED_PX = 130000, costAt = q => FIXED_PX / (innerWidth * innerHeight * PX_PER_CSS * PX_PER_CSS) + q * q;
+function rescale(q){ quality = q; frame(); settle = 3; gpuLog.length = 0; lateN = underN = 0; }
 const yaw = { v: 0 }, pitch = { v: 0 };
 function render(now){
   // the clock follows real elapsed time, so the water moves at the same pace at any frame rate
@@ -2713,7 +2727,13 @@ function render(now){
   device.queue.submit([enc.finish()]);
   if (stamps && stamps.pending){ stamps.pending = false; readStamps(); }
   frameNo++;
-  if (!pending){ pending = true; pendT = now; device.queue.onSubmittedWorkDone().then(() => { gpuMs = performance.now() - pendT; pending = false; }); }
+  const sent = performance.now(); inFlight++;
+  device.queue.onSubmittedWorkDone().then(() => {
+    const done = performance.now(); inFlight--;
+    gpuMs = done - Math.max(sent, lastDone); lastDone = done;
+    if (settle > 0) settle--;                  // the first frames after a resize also pay for the new targets
+    else { gpuLog.push(gpuMs); if (gpuLog.length > 5) gpuLog.shift(); }
+  });
 }
 function tick(now){
   if (!running || dead) return;
@@ -2722,12 +2742,16 @@ function tick(now){
   const interval = (S.open ? 2 : 1) * FRAME_MS;
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
-  if (!S.open){
-    if (pending){ overN++; underN = 0; }
-    else if (gpuMs < FRAME_MS * 0.55){ underN++; overN = Math.max(0, overN - 1); }
-    else { underN = 0; overN = Math.max(0, overN - 1); }
-    if (overN > 8 && quality > 0.5){ quality = Math.max(0.5, quality * 0.85); overN = 0; frame(); }
-    else if (underN > 90 && quality < 1.0){ quality = Math.min(1.0, quality * 1.08); underN = 0; frame(); }
+  if (inFlight > 1) return;                    // two frames behind: let the GPU catch up rather than queue a third
+  if (!S.open && gpuLog.length >= 3){
+    const ms = [...gpuLog].sort((a, b) => a - b)[gpuLog.length >> 1];    // the median of the last five
+    const per = ms / costAt(quality);
+    lateN = inFlight > 0 || ms > FRAME_MS * 0.8 ? lateN + 1 : 0;
+    underN = ms < FRAME_MS * 0.55 ? underN + 1 : 0;
+    if (lateN >= 3 && quality > 0.5)
+      rescale(Math.max(0.5, Math.min(quality * 0.92, Math.sqrt(Math.max(FRAME_MS * 0.5 / per - costAt(0), 0)))));
+    else if (underN > 90 && quality < 1.0 && per * costAt(Math.min(1, quality * 1.08)) < FRAME_MS * 0.55)
+      rescale(Math.min(1.0, quality * 1.08));
   }
   render(now);
 }
@@ -2739,10 +2763,10 @@ const oom = await device.popErrorScope(), bad = await device.popErrorScope();
 if (bad || oom){ device.destroy(); throw new Error((bad || oom).message); }
 await device.queue.onSubmittedWorkDone();
 root.classList.add("gl");
-addEventListener("resize", frame, { passive: true });
+addEventListener("resize", () => { frame(); settle = 3; gpuLog.length = 0; }, { passive: true });
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !dead;
-  if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ lastDraw = -1; nextDraw = 0; settle = 2; gpuLog.length = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 // a lost device (a driver reset, the GPU taken away) hands over to the three.js renderer
 device.lost.then(info => { dead = true; if (info.reason !== "destroyed" && window.A4D_FALLBACK) window.A4D_FALLBACK(); });
