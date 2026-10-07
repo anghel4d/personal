@@ -1411,7 +1411,7 @@ function frame(){
   }
   S.stats = S.stats || { frames: 0, resizes: 0 };   // for a diagnostics readout
   S.stats.resizes++;
-  Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: F32, api: "webgl2" });
+  Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: F32, api: "three.js (WebGL2)" });
   camera.aspect = w / h;
   const focal = Math.max(PHONE_F, Math.max(w, h) / 2 / Math.tan(50 * Math.PI / 180));
   camera.fov = 2 * Math.atan(h / 2 / focal) * 180 / Math.PI;
@@ -1523,6 +1523,8 @@ if (!navigator.gpu) throw new Error("no WebGPU");
 const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
 if (!adapter) throw new Error("no WebGPU adapter");
 const STAMPS = adapter.features.has("timestamp-query");
+const ainfo = adapter.info || {};
+const ADAPTER = [ainfo.vendor, ainfo.architecture, ainfo.description].filter(Boolean).join(" ");
 const device = await adapter.requestDevice({ requiredFeatures: STAMPS ? ["timestamp-query"] : [] });
 const TU = GPUTextureUsage, BU = GPUBufferUsage;
 const root = document.documentElement, S = window.A4D_STATE;
@@ -1698,7 +1700,7 @@ fn spec(c: vec2i) -> vec4f {
 fn emit(c: vec2i, C: vec4f) { textureStore(surf2, c, vec4f(C.x, C.y, 0.0, 0.0)); }`;
 // invert the choppy displacement (the height that ends up over each texel), then slopes by central differences: a
 // 16 x 16 tile composes its heights and a one-texel rim in workgroup memory. Heights are rounded to half precision, as
-// the WebGL renderer stores them, so the two agree bit for bit.
+// the three.js renderer stores them, so the two agree bit for bit.
 const surfWGSL = `
 const NN = ${N}; const PATCH = ${L.toFixed(2)};
 @group(0) @binding(0) var dispT: texture_2d<f32>;
@@ -2197,7 +2199,10 @@ const [chopRows, chopCols, swellRows, swellCols, surfP, mipP, hashP, bloomDownP,
   compute(bloomDownWGSL, "bloom down"), compute(bloomUpWGSL, "bloom up"),
   module(causWGSL, "caustics").then(m => device.createRenderPipelineAsync({ label: "caustics", layout: "auto",
     vertex: { module: m, entryPoint: "vs", buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }] }] },
-    fragment: { module: m, entryPoint: "fs", targets: [{ format: HDR, blend: add }] }, primitive: { topology: "triangle-list" } })),
+    fragment: { module: m, entryPoint: "fs", targets: [{ format: HDR, blend: add }] },
+    // as three.js draws them: back faces culled, which leaves out the triangles a fold of the light turns over (rows
+    // run flipped here, so the front face winds clockwise)
+    primitive: { topology: "triangle-list", cullMode: "back", frontFace: "cw" } })),
   module(envWGSL, "sky map").then(m => device.createRenderPipelineAsync({ label: "sky map", layout: "auto",
     vertex: { module: m, entryPoint: "vs" }, fragment: { module: m, entryPoint: "fs", targets: [{ format: HDR }] } })),
   module(waterWGSL, "water").then(m => device.createRenderPipelineAsync({ label: "water", layout: "auto",
@@ -2294,43 +2299,67 @@ function sizeTargets(w, h){
 const ctx = canvas.getContext("webgpu");
 ctx.configure({ device, format: canvasFormat, alphaMode: "opaque" });
 const runMips = (p, chain) => { for (const m of chain){ p.setPipeline(mipP); p.setBindGroup(0, m.g); p.dispatchWorkgroups(Math.ceil(m.w / 8), Math.ceil(m.h / 8)); } };
+// where the GPU spends the frame, pass by pass, if the browser lets the page time it (for the #diag readout)
+const PASSES = ["sea", "sky", "caustics", "maps", "water", "post", "final"];
+const stamps = STAMPS ? { set: device.createQuerySet({ type: "timestamp", count: 2 * PASSES.length }),
+  resolve: device.createBuffer({ size: 16 * PASSES.length, usage: BU.QUERY_RESOLVE | BU.COPY_SRC }),
+  read: device.createBuffer({ size: 16 * PASSES.length, usage: BU.COPY_DST | BU.MAP_READ }), free: true, ms: {} } : null;
+const stamp = (k, begin = true, end = true) => stamps && (begin || end) ? { timestampWrites: { querySet: stamps.set,
+  ...(begin ? { beginningOfPassWriteIndex: 2 * k } : {}), ...(end ? { endOfPassWriteIndex: 2 * k + 1 } : {}) } } : {};
+function readStamps(){
+  if (!stamps || stamps.free) return;
+  stamps.read.mapAsync(GPUMapMode.READ).then(() => {
+    const q = new BigInt64Array(stamps.read.getMappedRange());
+    PASSES.forEach((name, k) => {
+      const ms = q[2 * k + 1] > q[2 * k] && q[2 * k] > 0n ? Number(q[2 * k + 1] - q[2 * k]) / 1e6 : null;
+      if (ms !== null) stamps.ms[name] = stamps.ms[name] == null ? ms : stamps.ms[name] * 0.9 + ms * 0.1;
+    });
+    stamps.read.unmap(); stamps.free = true;
+    S.stats.passMs = stamps.ms;
+  }, () => { stamps.free = true; });
+}
 function encodeFrame(enc, t, envDue){
   // the sea
   device.queue.writeBuffer(oceanU, 0, new Float32Array([t % LOOP, 0, 0, 0]));
-  let p = enc.beginComputePass({ label: "sea" });
+  let p = enc.beginComputePass({ label: "sea", ...stamp(0) });
   const run = (pipe, g, x, y = 1) => { p.setPipeline(pipe); p.setBindGroup(0, g); p.dispatchWorkgroups(x, y); };
   run(chopRows, gOcean.chopRows, N); run(chopCols, gOcean.chopCols, N); run(surfP, gOcean.surf, N / 16, N / 16); runMips(p, gOcean.surfMips);
   run(swellRows, gOcean.swellRows, N2); run(swellCols, gOcean.swellCols, N2); runMips(p, gOcean.surf2Mips);
   p.end();
   // the sky map
   if (envDue){
-    const r = enc.beginRenderPass({ label: "sky map", colorAttachments: [{ view: level(envT, 0), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
+    const r = enc.beginRenderPass({ label: "sky map", ...stamp(1), colorAttachments: [{ view: level(envT, 0), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
     r.setPipeline(envP); r.setBindGroup(0, gEnv); r.draw(3); r.end();
   }
   // caustics: the bed (three colours), then the slices, four to a map
   const caus = (view, from, to) => {
-    const r = enc.beginRenderPass({ label: "caustics", colorAttachments: [{ view, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
+    const r = enc.beginRenderPass({ label: "caustics", ...stamp(2, from === 0, to === draws.length), colorAttachments: [{ view, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] }] });
     r.setPipeline(causP);
     for (let i = from; i < to; i++){ const g = draws[i].grid; r.setVertexBuffer(0, g.vb); r.setIndexBuffer(g.ib, "uint32"); r.setBindGroup(0, gCaus[i]); r.drawIndexed(g.count); }
     r.end();
   };
   caus(level(floorT, 0), 0, 3); caus(level(sliceT[0], 0), 3, 7); caus(level(sliceT[1], 0), 7, 11);
-  p = enc.beginComputePass({ label: "map mips" });
+  p = enc.beginComputePass({ label: "map mips", ...stamp(3) });
   runMips(p, gOcean.floorMips); runMips(p, gOcean.sliceMips[0]); runMips(p, gOcean.sliceMips[1]); if (envDue) runMips(p, gOcean.envMips);
   p.end();
   // the water
-  const r = enc.beginRenderPass({ label: "water", colorAttachments: [{ view: level(hdrT, 0), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+  const r = enc.beginRenderPass({ label: "water", ...stamp(4), colorAttachments: [{ view: level(hdrT, 0), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
   r.setPipeline(waterP); r.setBindGroup(0, gWater); r.draw(3); r.end();
   // the HDR frame's mips and the bloom
-  p = enc.beginComputePass({ label: "post" });
+  p = enc.beginComputePass({ label: "post", ...stamp(5) });
   runMips(p, gHdrMips);
   for (let i = 0; i < gBloom.length; i++){
     p.setPipeline(i < bloom.length ? bloomDownP : bloomUpP); p.setBindGroup(0, gBloom[i].g);
     p.dispatchWorkgroups(Math.ceil(gBloom[i].t.width / 8), Math.ceil(gBloom[i].t.height / 8));
   }
   p.end();
-  const f = enc.beginRenderPass({ label: "final", colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+  const f = enc.beginRenderPass({ label: "final", ...stamp(6), colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
   f.setPipeline(finalP); f.setBindGroup(0, gFinal); f.draw(3); f.end();
+  if (stamps && stamps.free){
+    enc.resolveQuerySet(stamps.set, 0, 2 * PASSES.length, stamps.resolve, 0);
+    enc.copyBufferToBuffer(stamps.resolve, 0, stamps.read, 0, 16 * PASSES.length);
+    stamps.free = false; stamps.pending = true;
+  }
 }
 // the camera as three.js r147 builds it (Euler YXZ through a quaternion, compose, perspective, inverse), in plain arrays
 const camMath = {
@@ -2413,7 +2442,7 @@ function frame(){
   if (cw !== W || ch !== H) sizeTargets(cw, ch);
   S.stats = S.stats || { frames: 0, resizes: 0 };
   S.stats.resizes++;
-  Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: true, api: "webgpu" });
+  Object.assign(S.stats, { css: [w, h], buffer: [W, H], pr, quality, f32: true, api: "webgpu", adapter: ADAPTER, stamps: STAMPS });
   aspect = w / h;
   const focal = Math.max(PHONE_F, Math.max(w, h) / 2 / Math.tan(50 * Math.PI / 180));
   fov = 2 * Math.atan(h / 2 / focal) * 180 / Math.PI;
@@ -2481,6 +2510,7 @@ function render(now){
   const enc = device.createCommandEncoder();
   encodeFrame(enc, t, envDue);
   device.queue.submit([enc.finish()]);
+  if (stamps && stamps.pending){ stamps.pending = false; readStamps(); }
   frameNo++;
   if (!pending){ pending = true; pendT = now; device.queue.onSubmittedWorkDone().then(() => { gpuMs = performance.now() - pendT; pending = false; }); }
 }
@@ -2500,7 +2530,7 @@ function tick(now){
   }
   render(now);
 }
-// the first frame proves the device: any error and the caller falls back to WebGL2
+// the first frame proves the device: any error and the caller falls back to the three.js renderer
 frame();
 device.pushErrorScope("validation"); device.pushErrorScope("out-of-memory");
 render(performance.now());
@@ -2513,7 +2543,7 @@ document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !dead;
   if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
-// a lost device (a driver reset, the GPU taken away) hands over to the WebGL2 renderer
+// a lost device (a driver reset, the GPU taken away) hands over to the three.js renderer
 device.lost.then(info => { dead = true; if (info.reason !== "destroyed" && window.A4D_FALLBACK) window.A4D_FALLBACK(); });
 raf = requestAnimationFrame(tick);
 if (window.A4D_DEBUG_GPU) window.__gpu = { device, textures: () => ({ surf, surf2, floorT, sliceT, envT, hdrT, hashT }) };
@@ -2523,11 +2553,12 @@ if (window.A4D_DEBUG_GPU) window.__gpu = { device, textures: () => ({ surf, surf
 <script>
 /* ================= boot: the renderer =================
    WebGPU where the browser has it; otherwise, or if it fails at any point, the three.js renderer on a fresh canvas
-   (a canvas keeps the first kind of context it hands out). three.js is fetched only then. */
+   (a canvas keeps the first kind of context it hands out). three.js is fetched only then. ?three in the address
+   asks for the three.js renderer, to compare the two. */
 (function(){
   const root = document.documentElement;
   let fell = false;
-  function webgl(){
+  function three(){
     if (fell) return; fell = true;
     const old = document.getElementById("sea"), fresh = old.cloneNode(false);
     old.replaceWith(fresh);
@@ -2536,9 +2567,9 @@ if (window.A4D_DEBUG_GPU) window.__gpu = { device, textures: () => ({ surf, surf
     js.onload = () => startGL(); js.onerror = () => root.classList.add("no-gl");
     document.head.appendChild(js);
   }
-  window.A4D_FALLBACK = webgl;
-  if (!/[?&]gpu\b/.test(location.search)) return webgl();
-  startGPU(document.getElementById("sea")).catch(e => { console.warn("lagoon: WebGPU unavailable, drawing with WebGL2:", e && e.message); webgl(); });
+  window.A4D_FALLBACK = three;
+  if (/[?&]three\b/.test(location.search) || !navigator.gpu) return three();
+  startGPU(document.getElementById("sea")).catch(e => { console.warn("lagoon: WebGPU unavailable, drawing with three.js:", e && e.message); three(); });
 })();
 </script>
 <script>
@@ -2626,6 +2657,8 @@ void main(){
       "canvas " + Math.round(c.width) + "x" + Math.round(c.height) + " css at y " + Math.round(c.top) + ", buffer " + (st.buffer || []).join("x"),
       "render pr " + (st.pr || 0).toFixed(3) + ", quality " + (st.quality || 0).toFixed(3) + ", fov " + st.fov + ", aspect " + (st.aspect || 0).toFixed(3),
       "frames " + fps.toFixed(1) + " fps, water clock x" + rate.toFixed(2) + " of real time, gpu " + Math.round(st.gpuMs || 0) + " ms",
+      "api    " + (st.api || "none") + (st.adapter ? ", " + st.adapter : ""),
+      "passes " + (st.passMs ? Object.entries(st.passMs).map(([k, v]) => k + " " + v.toFixed(2)).join(", ") + " ms" : st.api === "webgpu" ? "not timed (no timestamp queries)" : "n/a"),
       "resize calls " + st.resizes + ", float32 targets " + st.f32 + ", reduced motion asked " + mm,
       "ua     " + navigator.userAgent,
       "gpu    " + gpu.renderer + " (" + gpu.vendor + ")",
