@@ -42,7 +42,8 @@ Personal site for Matei Anghel, served at anghel4d.com. One static `index.html`,
    - **Timing**: where the browser grants `timestamp-query`, each pass group (sea, sky map, sky, caustics, maps, water, post, final) is timed on the GPU and shown in `#diag`.
    - **Cost**: `tools/shader-cost` compiles the page's WGSL with AMD's shader compiler (no GPU needed) and prints each pass's instructions, registers and estimated cycles; see its README. At the phone's size the frame came to about 49M wave64-cycles on RDNA2 (the water 27M, the final pass 8.9M, the caustics 6.7M, the sea 2.9M, the half-resolution sky 2.1M): under a millisecond on a Radeon 680M, before memory and rasterisation.
    - **Failure**: a validation or out-of-memory error on the first frame, or a lost device later, hands over to the three.js renderer on a fresh canvas (`window.A4D_FALLBACK`).
-   - Some WGSL needs care to compile everywhere: the water shader turns off the derivative uniformity check (`diagnostic(off, derivative_uniformity)`), since its quad-uniform branches are uniform in practice but not provably; a reversed `smoothstep` is written as `1 - smoothstep` with ordered edges.
+   - Some WGSL needs care to compile everywhere: the water shader turns off the derivative uniformity check (`diagnostic(off, derivative_uniformity)`), since its quad-uniform branches are uniform in practice but not provably (WebKit's compiler rejects it without); a reversed `smoothstep` is written as `1 - smoothstep` with ordered edges.
+   - **Safari**: `tools/safari-wgsl` compiles the page's WGSL with WebKit's own compiler, as Safari does, on Linux (see its README). A module Safari rejects sends iPhones to the three.js renderer without a word. As of October 2026 all 13 pass, with no warnings, on WebKit main and on the Safari 26 and 27 release branches. Safari's other paths checked against WebKit's source: `onSubmittedWorkDone` resolves from Metal's completion handler (the frame timing holds), and `createImageBitmap`'s resize options and `copyExternalImageToTexture` into `rgba8unorm-srgb` both work (the moon). Every limit the renderer needs is a WebGPU default.
 
 8. Boot script: once the statement has faded in (`A4D_SHOWN`, then its `transitionend`, 900 ms at most), WebGPU where `navigator.gpu` exists, else (or on any failure, or with `?three`) the three.js renderer, with three.js fetched only then. Until the first frame the page shows `--scene`.
 
@@ -54,7 +55,7 @@ Personal site for Matei Anghel, served at anghel4d.com. One static `index.html`,
 
 - Keep three.js pinned at 0.147.0. It is the last release that ships the UMD build together with `examples/js`; moving to ES modules needs an import map and a rework of the script tags.
 - Every piece of visible copy exists in English and French. Add both, or neither.
-- Keep it fast on integrated GPUs: 30 fps with the GPU under about 55% of the frame budget. Check any shader change against frame time, not just looks: `#diag` on real hardware, `tools/shader-cost` for the WGSL.
+- Keep it fast on integrated GPUs: 30 fps with the GPU under about 55% of the frame budget. Check any shader change against frame time, not just looks: `#diag` on real hardware, `tools/shader-cost` for the WGSL. Check any WGSL change with `tools/safari-wgsl` too.
 - Keep keyboard focus visible. The scene and the UI look and move the same everywhere: no `prefers-reduced-motion` variants.
 - Site copy: plain sentences, no em dashes.
 
