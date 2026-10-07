@@ -729,10 +729,13 @@ quad.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1
 const quadMesh = new THREE.Mesh(quad); quadMesh.frustumCulled = false;
 const quadScene = new THREE.Scene(); quadScene.add(quadMesh);
 const nullCam = new THREE.Camera();
+const gl = renderer.getContext(), FRESH = [gl.COLOR_ATTACHMENT0], FRESH_CANVAS = [gl.COLOR];
 function draw(mat, target, set){
   if (set) for (const k in set) mat.uniforms[k].value = set[k];
   quadMesh.material = mat;
   renderer.setRenderTarget(target);
+  // every pixel is drawn anew, so a tiled GPU (phones) need not first load what the target held
+  gl.invalidateFramebuffer(gl.FRAMEBUFFER, target ? FRESH : FRESH_CANVAS);
   renderer.render(quadScene, nullCam);
 }
 function clear(target){ renderer.setRenderTarget(target); renderer.clear(true, false, false); }
@@ -1594,7 +1597,7 @@ function lighting(n){
    55% of that budget. A fence tells how long the GPU took, to within a display refresh; the render scale steps down
    by a fifth after three frames that ran past their slot, and creeps back up after three seconds of comfortable
    frames. */
-const FRAME_MS = 1000 / 30, gl = renderer.getContext();
+const FRAME_MS = 1000 / 30;
 let clock = 0, lastDraw = -1, nextDraw = 0, running = true, shown = false, frameNo = 0, raf = 0;
 let fence = null, fenceT = 0, gpuMs = 0, lateN = 0, underN = 0;
 let envAt = -1, envNight = -1;
