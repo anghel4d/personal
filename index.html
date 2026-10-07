@@ -453,9 +453,12 @@ const LOOK = {
   amb: 0.35,                                   // ambient light under water
   sandLo: [0.78, 0.80, 0.78], sandHi: [0.93, 0.94, 0.91],
   shelf: 0.45,                                 // how fast the bed falls away with distance (m per m)
-  fog: 110,                                    // distance at which the water fades into the horizon haze (m)
+  fog: 250,                                    // distance over which the far sea goes behind the horizon haze (m)
   sun: [55, 30],                               // elevation, azimuth (degrees, positive to the right)
   glint: 0.04,                                 // angular radius of the sun as the water reflects it (rad): more, softer sparkles
+  capillary: 0.003,                            // slope variance per axis of ripples finer than the FFT (Cox and Munk give
+                                               // about 0.009 at 3 m/s of wind; the FFT carries 0.006)
+  facets: 20000,                               // capillary facets per square metre: how finely far glitter breaks into sparkles
   sky: 1.4,                                    // sky brightness: the sky has to read as the light the water is lit by
   exposure: 1.3, sat: 1.8,
   speed: 1.0                                   // the water's clock against real time; 1 is true speed for these waves
@@ -497,14 +500,43 @@ function genSpectrum(){
     variance += re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m];
   }
   const sc = 1 / Math.sqrt(Math.max(variance, 1e-20)), data = new Float32Array(N * N * 4);
+  // slope statistics of this sea, for shading what the filtered map stops resolving with distance: the covariance of
+  // the slopes (central differences, as the slope pass takes them) and how their variance spreads over wavenumber
+  const dl = L / N, hist = new Float64Array(96); let sxx = 0, sxz = 0, szz = 0;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
+    const mx = i < N / 2 ? i : i - N, mz = j < N / 2 ? j : j - N;
+    if (mx === -N / 2 || mz === -N / 2 || (mx === 0 && mz === 0)) continue;
+    const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
+    const pw = (re[idx] * re[idx] + im[idx] * im[idx] + re[m] * re[m] + im[m] * im[m]) * sc * sc;
+    const gx = Math.sin(mx * dk * dl) / dl, gz = Math.sin(mz * dk * dl) / dl;
+    sxx += pw * gx * gx; sxz += pw * gx * gz; szz += pw * gz * gz;
+    hist[Math.min(95, Math.round(Math.log2(Math.hypot(mx, mz) * dk) * 12))] += pw * (gx * gx + gz * gz);
+  }
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++){
     const idx = j * N + i, m = ((N - j) % N) * N + ((N - i) % N);
     data[idx * 4] = re[idx] * sc; data[idx * 4 + 1] = im[idx] * sc; data[idx * 4 + 2] = re[m] * sc; data[idx * 4 + 3] = -im[m] * sc;
   }
   const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.FloatType);
   t.needsUpdate = true;
+  t.userData = { sxx, sxz, szz, hist };
   return t;
 }
+const H0 = genSpectrum();
+// The slopes the shading can count on: the patch plus its rotated, larger copy, scaled to world heights, times the share
+// of the spectrum's slope variance that the choppy inversion and the B-spline keep at the finest footprint (0.72,
+// measured). s50 is the width of a Gaussian filter that removes half of it.
+const SLOPE = (() => {
+  const { sxx, sxz, szz, hist } = H0.userData, k = RMS * RMS * 0.72, wb = 0.22;
+  const R = [[0.8, -0.6], [0.6, 0.8]], M = [[sxx, sxz], [sxz, szz]], C = [[0, 0], [0, 0]];   // R = transpose(SW)
+  for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let p = 0; p < 2; p++) for (let q = 0; q < 2; q++) C[a][b] += R[a][p] * M[p][q] * R[b][q];
+  const cov = [k * (sxx + wb * wb * C[0][0]), k * (sxz + wb * wb * C[0][1]), k * (szz + wb * wb * C[1][1])];
+  const tot = hist.reduce((x, v) => x + v, 0);
+  const kept = w => hist.reduce((x, v, b) => x + v * Math.exp(-0.5 * (2 ** (b / 12) * w) ** 2), 0) / tot;
+  let lo = 1e-4, hi = 10;
+  for (let i = 0; i < 48; i++){ const mid = Math.sqrt(lo * hi); if (kept(mid) > 0.5) lo = mid; else hi = mid; }
+  const s50 = Math.sqrt(lo * hi), x0 = Math.pow(0.8 * (L / N) / s50, 1.65);
+  return { cov, s50, g0: x0 / (1 + x0) };
+})();
 const ocean = [rt(N, N, FFT_TYPE, { nearest: true }), rt(N, N, FFT_TYPE, { nearest: true })];
 const dispRT = rt(N, N, HALF, { repeat: true }), heightRT = rt(N, N, HALF, { nearest: true });
 const surfRT = rt(N, N, HALF, { repeat: true, mip: true, aniso: 8 });
@@ -526,7 +558,7 @@ void main(){
   vec2 mih = vec2(h.y, -h.x);
   vec2 dx = mih * (k.x / kl), dz = mih * (k.y / kl);
   o = vec4(h + vec2(-dx.y, dx.x), dz);
-}`, { uH0: genSpectrum(), uT: 0 });
+}`, { uH0: H0, uT: 0 });
 // (height, chop Dx, chop Dz, Jacobian)
 const mDisp = shader(GL_CONST + `
 uniform sampler2D uSrc;
@@ -680,18 +712,24 @@ vec4 cumulusBank(vec3 d){
   float lit = clamp(0.2 + 1.0 * t + 0.9 * (fbm2(q * 1.7 + 4.0) - 0.45), 0.0, 1.0);
   return vec4(vec3(lit), m);
 }
+// the horizon's colour, and the haze between the eye and the horizon: the cloud bank's base and the sea's far edge sit
+// behind the same amount of it, so they meet at the horizon
+const float HAZE = 0.45;
+vec3 horizonCol(){
+  return mix(mix(vec3(0.520, 0.300, 0.160), vec3(0.540, 0.790, 0.980), smoothstep(-0.02, 0.35, uSun.y)), vec3(0.010, 0.029, 0.050), uNight);
+}
+vec3 hazeCol(){ return horizonCol() * 1.12 * mix(${LOOK.sky.toFixed(3)}, 0.85, uNight); }
 vec3 skyRadiance(vec3 d){
   vec3 s = uGlint;
   float sunH = uSun.y, y = max(d.y, 0.0), mu = dot(d, s), m = max(mu, 0.0);
   // a clear summer sky: deep cyan-blue overhead, paling toward a bright horizon
   vec3 zen = mix(vec3(0.010, 0.040, 0.160), vec3(0.006, 0.240, 0.700), smoothstep(-0.05, 0.45, sunH));
   vec3 mid = vec3(0.050, 0.460, 0.900);
-  vec3 hor = mix(vec3(0.520, 0.300, 0.160), vec3(0.540, 0.790, 0.980), smoothstep(-0.02, 0.35, sunH));
+  vec3 hor = horizonCol();
   vec3 tint = mix(vec3(1.0, 0.55, 0.25), vec3(1.0, 0.96, 0.90), smoothstep(0.0, 0.4, sunH));
   // night keeps the same structure, dimmed and cooled, with the glow of the moon instead of the sun
   zen = mix(zen, vec3(0.0016, 0.0050, 0.0140), uNight);
   mid = mix(mid, vec3(0.0040, 0.0120, 0.0300), uNight);
-  hor = mix(hor, vec3(0.010, 0.029, 0.050), uNight);
   vec3 glow = mix(tint, vec3(0.62, 0.78, 0.95) * 0.06, uNight);
   vec3 col = mix(mix(hor, mid, smoothstep(0.0, 0.35, pow(y, 0.6))), zen, smoothstep(0.25, 1.0, y));
   col += glow * (0.10 * pow(m, 6.0) + 0.35 * pow(m, 48.0) + 1.6 * pow(m, 700.0)) * (1.0 - 0.6 * y);
@@ -710,14 +748,14 @@ vec3 skyRadiance(vec3 d){
   vec4 cb = cumulusBank(d);
   if (cb.a > 0.0){
     vec3 cc = mix(cloudDark, cloudLit, cb.r) + tint * pow(m, 8.0) * 0.4 * (1.0 - uNight);
-    cc = mix(cc, hor * 1.12, exp(-max(d.y, 0.0) * 45.0) * 0.45);   // the bank sits behind the haze
+    cc = mix(cc, hor * 1.12, exp(-max(d.y, 0.0) * 45.0) * HAZE);   // the bank sits behind the haze
     col = mix(col, cc, cb.a);
   }
   return col * mix(${LOOK.sky.toFixed(3)}, 0.85, uNight);
 }
 `;
-const ENV_W = 512, ENV_H = 256, ENV_MAX = Math.log2(ENV_W);
-const envRT = rt(ENV_W, ENV_H, HALF, { repeat: true, clampT: true, mip: true });
+const ENV_W = 512, ENV_H = 256;
+const envRT = rt(ENV_W, ENV_H, HALF, { repeat: true, clampT: true, mip: true, aniso: 4 });
 const mEnv = shader(SKY_GLSL + `
 void main(){
   float phi = (vUv.x - 0.5) * 2.0 * 3.14159265359, th = (1.0 - vUv.y) * 3.14159265359;
@@ -743,14 +781,21 @@ const float MICRO = ${(0.012 + SEA * 0.035).toFixed(4)};
 const float SB = 2.6, WB = 0.22;                       // a rotated, larger copy of the patch hides the tiling
 const mat2 SW = mat2(0.8, -0.6, 0.6, 0.8);
 const int VOL = 10;
+// the sea below the pixel: slope statistics from the spectrum (see SLOPE), the capillaries beyond it, the glint disc
+const vec3 MSL = vec3(${SLOPE.cov.map(x => x.toExponential(4)).join(", ")});   // resolved slope covariance (xx, xz, zz)
+const float S50 = ${SLOPE.s50.toFixed(5)}, G0 = ${SLOPE.g0.toFixed(5)}, TEXEL = ${(L / N).toFixed(5)}, CAP = ${LOOK.capillary.toExponential(3)};
+const float GLINT = ${LOOK.glint.toFixed(4)}, GL2 = GLINT * GLINT / 16.0, DENS = ${LOOK.facets.toFixed(1)};
 
 float ign(vec2 p, int f){ p += 5.588238 * float(f % 64); return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 float hg(float c, float g){ float g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5)); }
 bool badF(vec3 v){ return any(equal(floatBitsToUint(v) & 0x7F800000u, uvec3(0x7F800000u))); }
 
-vec3 envL(vec3 d, float lod){
+// the sky as a rough sea sees it: radiance averaged over a spread of reflected directions, elev and azim being angular
+// widths (rad). Explicit gradients let the hardware's anisotropic filter blur elevation and azimuth by different amounts.
+vec3 envSpread(vec3 d, float elev, float azim){
   vec2 uv = vec2(atan(d.z, d.x) * (0.5 / PI) + 0.5, 1.0 - acos(clamp(d.y, -1.0, 1.0)) / PI);
-  return textureLod(uEnv, uv, clamp(lod, 0.0, ${ENV_MAX.toFixed(1)})).rgb;
+  vec2 g = max(vec2(azim / (2.0 * PI * max(sqrt(1.0 - d.y * d.y), 0.1)), elev / PI), vec2(${(1.31 / ENV_W).toFixed(6)}, ${(1.31 / ENV_H).toFixed(6)}));
+  return textureGrad(uEnv, uv, vec2(g.x, 0.0), vec2(0.0, g.y)).rgb;
 }
 // the sun (or moon) disc: radiance = irradiance spread over the disc, widened by the reflection cone
 vec3 disc(vec3 d, float cone){
@@ -758,7 +803,17 @@ vec3 disc(vec3 d, float cone){
   float ang = acos(clamp(dot(d, uGlint), -1.0, 1.0));
   return uSunCol * smoothstep(r * 1.2, r * 0.8, ang) / (PI * r * r);
 }
-vec3 skyL(vec3 d, float cone){ return envL(d, cone * 60.0) + disc(d, max(cone, ${LOOK.glint.toFixed(4)})); }
+// the share of the resolved slope variance a filter of width w (m) removes: fitted to the spectrum, x^1.65 / (1 + x^1.65)
+// with x = w / S50, counted from the finest footprint the map is ever sampled at (G0, at 0.8 texel)
+float lostShare(float w){ float x = pow(w / S50, 1.65); return clamp((x / (1.0 + x) - G0) / (1.0 - G0), 0.0, 1.0); }
+// how many of the footprint's facets mirror the light this instant: Poisson, inverted directly for small means and
+// drawn from its normal approximation above 4
+float poisson(float lam, float u){
+  if (lam > 4.0) return max(floor(lam + sqrt(lam) * 0.5513 * log(u / (1.0 - u)) + 0.5), 0.0);
+  float p = exp(-lam), c = p, k = 0.0;
+  for (int i = 0; i < 14; i++){ if (u <= c) break; k += 1.0; p *= lam / k; c += p; }
+  return k;
+}
 
 vec4 texBS(sampler2D t, vec2 uv){ // cubic B-spline filtering in 4 bilinear taps
   vec2 ts = vec2(textureSize(t, 0)); vec2 p = uv * ts - 0.5; vec2 f = fract(p); p = floor(p);
@@ -870,13 +925,60 @@ void main(){
   vec2 slope = A.yz + WB * (transpose(SW) * B.yz);
   float mf = clamp(1.0 - foot / 0.012, 0.0, 1.0);             // ripples finer than a pixel are left out
   if (mf > 0.0) slope += microSlope(P.xz) * mf;
-  vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
+  vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y)), v = -wd;
 
-  float cosi = max(-dot(wd, n), 0.02);
-  float F = fresnelDielectric(cosi, 1.0, 1.333);
-  vec3 rr = reflect(wd, n);
-  if (rr.y < 0.01) rr = normalize(vec3(rr.x, 0.01 + abs(rr.y) * 0.3, rr.z));
-  vec3 refl = skyL(rr, 0.006 + MICRO * 0.02);
+  // ---- what the pixel holds beyond its resolved normal: the slope variance its footprint filtered away. Along the
+  // view the footprint is stretched by 1 / sin(depression); the effective filter width is fitted to the hardware's
+  // mip, 8x anisotropic and B-spline filtering. Capillaries enter as the resolved waves do. ----
+  vec2 u = normalize(wd.xz);
+  float vAl = dot(u, vec2(MSL.x * u.x + MSL.y * u.y, MSL.y * u.x + MSL.z * u.y)), vAc = MSL.x + MSL.z - vAl;
+  float wa = foot / max(-wd.y, 1e-3), wm = max(foot, wa * 0.125), tl = max(TEXEL, wm);
+  float shA = lostShare(length(vec2(0.48 * wa, 0.8 * tl))), shC = lostShare(length(vec2(0.48 * wm, 0.8 * tl)));
+  float va = (vAl + CAP) * shA + 1e-6, vc = (vAc + CAP) * shC + 1e-6;
+  float rho = vAl * (1.0 - shA) / (vAl + CAP * shA);        // share of the slopes still resolved
+
+  // ---- the facets the eye sees: masking hides those tilted away, so at grazing angles the visible ones lean toward
+  // the viewer and mirror higher, darker sky at a gentler Fresnel angle. Exact mean and spread of the visible tilt for
+  // Gaussian slopes (Smith), carried by two facets; each sees the sky blurred by what it stands for. ----
+  float cv = dot(v, n);
+  vec3 T = v - cv * n; float sv = max(length(T), 1e-4); T /= sv;
+  float sg = sqrt(va), tq = cv / (sv * sg), tz = clamp(tq, -8.0, 8.0);   // past 8 the normal cdf is 1 in float
+  float Phi = 0.5 + 0.5 * tanh(0.7978846 * (tz + 0.044715 * tz * tz * tz)), phi = 0.3989423 * exp(-0.5 * tz * tz);
+  float Zv = phi + tq * Phi, m1 = sg * Phi / Zv;
+  float sd = sg * sqrt(max((2.0 * phi + tq * Phi) / Zv - (Phi / Zv) * (Phi / Zv), 0.0));
+  int nodes = sd > 0.008 ? 2 : 1;
+  vec3 refl = vec3(0.0); float F = 0.0;
+  for (int i = 0; i < 2; i++){
+    if (i >= nodes) break;
+    float s = nodes == 1 ? m1 : m1 + (i == 0 ? -sd : sd);
+    float ci = max((cv + s * sv) / sqrt(1.0 + s * s + vc), 0.02), Fi = fresnelDielectric(ci, 1.0, 1.333);
+    vec3 r = reflect(wd, normalize(n + s * T));
+    if (r.y < 0.01) r = normalize(vec3(r.x, 0.01 + abs(r.y) * 0.3, r.z));
+    // a tilt along the view turns the reflection by twice the tilt; a tilt across it, by twice the tilt times cos(i),
+    // which vanishes at grazing angles: reflections on a rough sea stretch into vertical streaks
+    refl += Fi * envSpread(r, 2.4 * sd, 4.0 * sqrt(vc) * ci);
+    F += Fi;
+  }
+  refl /= float(nodes); F /= float(nodes);
+
+  // ---- glints: the resolved facet's mirror image of the sun (or moon), handing over with distance to the glitter of
+  // the facets the map no longer resolves. Their mean radiance is the microfacet reflection with Smith masking; the
+  // footprint holds DENS * area of them, and a Poisson count mirrors the light at each instant (about 12 a second). ----
+  vec3 glint = vec3(0.0);
+  if (rho > 0.001) glint = rho * fresnelDielectric(max(cv, 0.02), 1.0, 1.333) * disc(reflect(wd, n), max(0.006 + MICRO * 0.02, GLINT));
+  if (rho < 0.999){
+    vec3 h = normalize(v + uGlint);
+    float hn = dot(h, n);
+    vec2 sh = vec2(dot(h, T), dot(h, cross(n, T))) / max(hn, 0.05);
+    float a2 = va + GL2, c2 = vc + GL2, q = 0.5 * (sh.x * sh.x / a2 + sh.y * sh.y / c2);
+    if (hn > 0.3 && q < 14.0){
+      float D = exp(-q) / (2.0 * PI * sqrt(a2 * c2) * hn * hn * hn * hn);
+      float vis = D / (4.0 * max(cv, 1e-3) * (1.0 + (phi - tq * (1.0 - Phi)) / max(tq, 1e-4)));
+      float lam = (1.0 - rho) * vis * PI * GLINT * GLINT * max(DENS * foot * wa, 1.0);
+      float k = poisson(lam, hash13(vec3(gl_FragCoord.xy, floor(mod(uTime, 600.0) * 12.0 + 7.0 * hash12(gl_FragCoord.xy)))));
+      glint += uSunCol * fresnelDielectric(dot(v, h), 1.0, 1.333) * (1.0 - rho) * vis * k / max(lam, 1e-9);
+    }
+  }
 
   // ---- into the water: volume, then the bed ----
   vec3 tt = refract(wd, n, 1.0 / 1.333);
@@ -895,11 +997,10 @@ void main(){
   if (dz < 0.01) c = texture(uFloor, FP.xz / PATCH).rgb;
   c = mix(vec3(1.0), badF(c) ? vec3(1.0) : clamp(c, 0.0, 150.0), exp(-dz * 0.9)) * exp(-SIG_T * bd / max(-uLw.y, 0.05));
   vec3 Lbed = brdfSun(nb, -tt, -uLw, alb, 0.85) * uSunCol * uCausK * c + alb / PI * ambWater(bd, nb);
-  vec3 col = F * refl + (1.0 - F) * (vol + Tr * Lbed);
+  vec3 col = refl + glint + (1.0 - F) * (vol + Tr * Lbed);
 
-  // distant water fades into the horizon haze
-  float fog = 1.0 - exp(-pow(dist / ${LOOK.fog.toFixed(1)}, 1.6));
-  col = mix(col, envL(normalize(vec3(wd.x, 0.02, wd.z)), 4.0) * 1.05, fog);
+  // the far sea goes behind the same haze as the cloud bank's base, so the two meet at the horizon
+  col = mix(col, hazeCol(), HAZE * (1.0 - exp(-dist / ${LOOK.fog.toFixed(1)})));
   o = vec4(max(mix(col, skyc, hz), 0.0), 1.0);
 }`, {
   uSurf: surfRT.texture, uFloor: floorRT.texture, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
