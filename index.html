@@ -684,15 +684,18 @@ function runSea(t){
 
 /* ---------- caustics: one photon per grid vertex, refracted to a horizontal plane; intensity = area before / after ---------- */
 const light = { sun: shared(new THREE.Vector3()), glint: shared(new THREE.Vector3()), col: shared(new THREE.Vector3()), lw: shared(new THREE.Vector3()), flatT: shared(1), causK: shared(1), amb: shared(new THREE.Vector3()) };
-function photonGrid(G){
-  const g = new THREE.InstancedBufferGeometry();
-  const v = new Float32Array((G + 1) * (G + 1) * 2); let o = 0;
-  for (let j = 0; j <= G; j++) for (let i = 0; i <= G; i++){ v[o++] = i / G; v[o++] = j / G; }
-  const idx = new Uint32Array(G * G * 6); o = 0;
-  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++){ const a = j * (G + 1) + i, b = a + 1, c = a + G + 1, d = c + 1; idx[o++] = a; idx[o++] = b; idx[o++] = c; idx[o++] = b; idx[o++] = d; idx[o++] = c; }
+// G photons per patch side, on a window E cells wider than the patch on every side. Each pass slides the window by
+// whole cells to where flat water would send its light from (uOrigin), so every photon that lands in the map is drawn
+// once, at the same lattice point as in a 3 x 3 tiling of the patch, for a fifth of the vertices.
+function photonGrid(G, E){
+  const g = new THREE.BufferGeometry(), W = G + 2 * E;
+  const v = new Float32Array((W + 1) * (W + 1) * 2); let o = 0;
+  for (let j = 0; j <= W; j++) for (let i = 0; i <= W; i++){ v[o++] = i - E; v[o++] = j - E; }
+  const idx = new Uint32Array(W * W * 6); o = 0;
+  for (let j = 0; j < W; j++) for (let i = 0; i < W; i++){ const a = j * (W + 1) + i, b = a + 1, c = a + W + 1, d = c + 1; idx[o++] = a; idx[o++] = b; idx[o++] = c; idx[o++] = b; idx[o++] = d; idx[o++] = c; }
   g.setAttribute("position", new THREE.BufferAttribute(v, 2));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
-  g.instanceCount = 9;                                           // 3x3 copies so every map tiles seamlessly
+  g.userData.G = G;
   return g;
 }
 const FRESNEL = `float fresnelDielectric(float cosi, float etai, float etat){
@@ -705,21 +708,22 @@ const FRESNEL = `float fresnelDielectric(float cosi, float etai, float etat){
   return 0.5 * (rs * rs + rp * rp);
 }
 `;
-function causMaterial(ior, mask, sliceY, lod){
+function causMaterial(ior, mask, sliceY, lod, G){
   return new THREE.RawShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: { uSurf: { value: surfRT.texture }, uSun: light.sun, uLw: light.lw, uFlatT: light.flatT,
-      uIor: { value: ior }, uMask: { value: new THREE.Vector4(...mask) }, uSliceY: { value: sliceY }, uLod: { value: lod } },
+      uIor: { value: ior }, uMask: { value: new THREE.Vector4(...mask) }, uSliceY: { value: sliceY }, uLod: { value: lod },
+      uOrigin: { value: new THREE.Vector2() }, uG: { value: G } },
     vertexShader: `precision highp float; precision highp sampler2D;
       ${GL_CONST}
       in vec2 position;
-      uniform sampler2D uSurf; uniform vec3 uSun, uLw; uniform float uFlatT, uIor, uSliceY, uLod;
+      uniform sampler2D uSurf; uniform vec3 uSun, uLw; uniform vec2 uOrigin; uniform float uFlatT, uIor, uSliceY, uLod, uG;
       out vec2 vOld, vNew; out float vW;
       ${FRESNEL}
       void main(){
-        vec2 off = vec2(gl_InstanceID % 3 - 1, gl_InstanceID / 3 - 1);
-        vec4 s = textureLod(uSurf, position, uLod);               // slopes band-limited to the photon spacing
-        vec3 p = vec3(position.x * PATCH, s.x, position.y * PATCH);
+        vec2 c = (position + uOrigin) / uG;                       // the photon's lattice point, in patches
+        vec4 s = textureLod(uSurf, c, uLod);                      // slopes band-limited to the photon spacing
+        vec3 p = vec3(c.x * PATCH, s.x, c.y * PATCH);
         vec3 n = normalize(vec3(-s.y, 1.0, -s.z));
         float ci = dot(n, uSun);
         float T = ci > 0.0 ? (1.0 - fresnelDielectric(ci, 1.0, 1.333)) / uFlatT : 0.0;
@@ -729,7 +733,7 @@ function causMaterial(ior, mask, sliceY, lod){
         vOld = p.xz + uLw.xz * (uSliceY / uLw.y);                // where flat water would have sent it
         vNew = q.xz;
         vW = clamp(T, 0.0, 25.0);
-        gl_Position = vec4((q.xz / PATCH + off) * 2.0 - 1.0, 0.0, 1.0);
+        gl_Position = vec4((q.xz / PATCH) * 2.0 - 1.0, 0.0, 1.0);
       }`,
     fragmentShader: `precision highp float;
       in vec2 vOld, vNew; in float vW; out vec4 o; uniform vec4 uMask;
@@ -751,18 +755,26 @@ function causScene(geo, mats){
 // the bed: one map per colour channel, each refracted with its own index (dispersion)
 const FLOOR_RES = 1024;
 const floorRT = rt(FLOOR_RES, FLOOR_RES, HALF, { repeat: true, mip: true, aniso: 8 });
-const floorScene = causScene(photonGrid(192), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
-  .map(([ior, m]) => causMaterial(ior, m, -DBED, 0.0)));
+const CAUS_EDGE = { floor: 24, slice: 24 };   // the window's margin in cells: room for the slopes' spread of the light (a low moon spreads it most)
+const floorScene = causScene(photonGrid(192, CAUS_EDGE.floor), [[1.3310, [1, 0, 0, 0]], [1.3340, [0, 1, 0, 0]], [1.3380, [0, 0, 1, 0]]]
+  .map(([ior, m]) => causMaterial(ior, m, -DBED, 0.0, 192)));
 // the volume: eight horizontal slices from the surface to the bed, four to a texture (one per channel)
 const SLICES = 8, SLICE_RES = 256;
 const sliceRT = [0, 1].map(() => rt(SLICE_RES, SLICE_RES, HALF, { repeat: true, mip: true }));
-const sliceGeo = photonGrid(96);
+const sliceGeo = photonGrid(96, CAUS_EDGE.slice);
 const sliceScenes = [0, 1].map(r => causScene(sliceGeo, [0, 1, 2, 3].map(c => {
-  const k = r * 4 + c; return causMaterial(1.333, [0, 1, 2, 3].map(i => +(i === c)), -DVOL * k / (SLICES - 1), 1.4);
+  const k = r * 4 + c; return causMaterial(1.333, [0, 1, 2, 3].map(i => +(i === c)), -DVOL * k / (SLICES - 1), 1.4, 96);
 })));
+// each pass's window starts where flat water sends the light that lands at the map's corner
+function causOrigins(scene){
+  for (const m of scene.children){
+    const u = m.material.uniforms, lw = light.lw.value, k = u.uSliceY.value / Math.min(lw.y, -1e-3) / L, G = u.uG.value;
+    u.uOrigin.value.set(Math.round(-lw.x * k * G), Math.round(-lw.z * k * G));
+  }
+}
 function renderCaustics(){
-  clear(floorRT); renderer.render(floorScene, nullCam);          // one render per map: the mip chain is built once
-  for (let r = 0; r < 2; r++){ clear(sliceRT[r]); renderer.render(sliceScenes[r], nullCam); }
+  causOrigins(floorScene); clear(floorRT); renderer.render(floorScene, nullCam);   // one render per map: the mip chain is built once
+  for (let r = 0; r < 2; r++){ causOrigins(sliceScenes[r]); clear(sliceRT[r]); renderer.render(sliceScenes[r], nullCam); }
 }
 
 /* ---------- sky: gradient, haze band, drifting cumulus; baked into an environment map for reflections ---------- */
@@ -846,11 +858,53 @@ void main(){
   o = vec4(skyRadiance(vec3(sin(th) * cos(phi), cos(th), sin(th) * sin(phi))), 1.0);
 }`, { uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uNight: 0, uTime: 0 });
 
+/* ---------- noise as texture reads ----------
+   The bed's value noise is fixed in space, so the GPU hashes the integer lattice around the viewer once, with the same
+   hash12 the shaders use, and each vnoise there becomes one bilinear read at smoothstep-warped coordinates (vnoiseL).
+   Grain finer than the lattice can afford, and the ripples' noise, which changes all the time, read a small periodic
+   texture of random values instead: R holds the values, G the same values 37 and 17 texels on, so one read serves two
+   slices of 3D noise (vnoiseT, vnoise3T). */
+const HASH_O = [-224, -260], HASH_W = 448, HASH_H = 304;      // lattice cells x from -224, z from -260
+const hashRT = rt(HASH_W, HASH_H, HALF);
+draw(shader(`float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+void main(){ o = vec4(hash12(floor(gl_FragCoord.xy) + vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0)), 0.0, 0.0, 1.0); }`, {}), hashRT);
+const NOISE_N = 256;
+const noiseTex = (() => {
+  const r = mulberry(5), R = new Uint8Array(NOISE_N * NOISE_N), d = new Uint8Array(NOISE_N * NOISE_N * 2);
+  for (let i = 0; i < R.length; i++) R[i] = Math.floor(r() * 256);
+  for (let y = 0; y < NOISE_N; y++) for (let x = 0; x < NOISE_N; x++){
+    const i = y * NOISE_N + x;
+    d[i * 2] = R[i]; d[i * 2 + 1] = R[((y + 17) % NOISE_N) * NOISE_N + (x + 37) % NOISE_N];
+  }
+  const t = new THREE.DataTexture(d, NOISE_N, NOISE_N, THREE.RGFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
+  return t;
+})();
+const NOISE_GLSL = `
+uniform sampler2D uHash, uNoise;
+const vec2 HASH_O = vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0), HASH_S = vec2(${HASH_W}.0, ${HASH_H}.0);
+float vnoiseL(vec2 p){
+  vec2 i = floor(p), u = fract(p), c = i - HASH_O;
+  if (any(lessThan(c, vec2(0.0))) || any(greaterThan(c, HASH_S - 2.0))) return vnoise(p);
+  u = u * u * (3.0 - 2.0 * u);
+  return textureLod(uHash, (c + u + 0.5) / HASH_S, 0.0).r;
+}
+float vnoiseT(vec2 p){
+  vec2 i = floor(p), u = fract(p); u = u * u * (3.0 - 2.0 * u);
+  return textureLod(uNoise, (mod(i, ${NOISE_N}.0) + u + 0.5) / ${NOISE_N}.0, 0.0).r;
+}
+float vnoise3T(vec3 p){
+  vec3 i = floor(p), u = fract(p); u = u * u * (3.0 - 2.0 * u);
+  vec2 rg = textureLod(uNoise, (mod(i.xy + vec2(37.0, 17.0) * i.z, ${NOISE_N}.0) + u.xy + 0.5) / ${NOISE_N}.0, 0.0).rg;
+  return mix(rg.x, rg.y, u.z);
+}
+`;
+
 /* ---------- the visible world: one full-screen pass, ray cast against the sea ---------- */
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 const EYE = 1.25;                                                // eye height above the water (m)
 const camRot = new THREE.Matrix3(), res = new THREE.Vector2(1, 1);
-const mWater = shader(GL_CONST + SKY_GLSL + FRESNEL + `
+const mWater = shader(GL_CONST + SKY_GLSL + NOISE_GLSL + FRESNEL + `
 uniform sampler2D uSurf, uSurf2, uFloor, uSliceA, uSliceB, uEnv;
 uniform vec3 uCam, uLw, uAmb;
 uniform mat3 uCamRot; uniform mat4 uInvProj;
@@ -936,9 +990,9 @@ float surfH(vec2 xz){ return texture(uSurf, xz / PATCH).x + WB * SB * texture(uS
 vec2 microSlope(vec2 xz){
   vec3 q = vec3(xz * 55.0, uTime * 1.7);
   float e = 0.35;
-  float n0 = vnoise3(q), nx = vnoise3(q + vec3(e, 0.0, 0.0)), nz = vnoise3(q + vec3(0.0, e, 0.0));
+  float n0 = vnoise3T(q), nx = vnoise3T(q + vec3(e, 0.0, 0.0)), nz = vnoise3T(q + vec3(0.0, e, 0.0));
   vec3 q2 = vec3(xz * 140.0, uTime * 2.9);
-  float m0 = vnoise3(q2), mx = vnoise3(q2 + vec3(e, 0.0, 0.0)), mz = vnoise3(q2 + vec3(0.0, e, 0.0));
+  float m0 = vnoise3T(q2), mx = vnoise3T(q2 + vec3(e, 0.0, 0.0)), mz = vnoise3T(q2 + vec3(0.0, e, 0.0));
   return (vec2(nx - n0, nz - n0) + 0.5 * vec2(mx - m0, mz - m0)) * MICRO;
 }
 
@@ -951,7 +1005,7 @@ float causVol(vec2 uv, float w, float lod){
 // the bed shelves away from the shore behind the viewer: bright shallows in front, deep blue water further out
 float bedDepth(vec2 xz){
   float r = max(-xz.y - 2.0, 0.0);
-  return min(DBED + ${LOOK.shelf.toFixed(3)} * r + 0.0016 * r * r + 0.12 * (vnoise(xz * 0.21) - 0.5) * min(r * 0.3, 1.0), 14.0);
+  return min(DBED + ${LOOK.shelf.toFixed(3)} * r + 0.0016 * r * r + 0.12 * (vnoiseL(xz * 0.21) - 0.5) * min(r * 0.3, 1.0), 14.0);
 }
 vec3 ambWater(float depth, vec3 n){ return uAmb * exp(-KDV * depth) * (0.35 + 0.65 * (0.5 + 0.5 * n.y)); }
 // in-scattering along a ray under water: the caustic sheets, exaggerated against their local average, make the shafts
@@ -963,17 +1017,18 @@ vec3 waterVolume(vec3 ro, vec3 rd, float tmax, out vec3 Tr){
   float shaftMean = 1.4 * GOD / (GOD + 0.7);
   float mu = dot(-uLw, rd);
   float ph = 0.35 * hg(mu, 0.8) + 0.65 * hg(mu, 0.35);
+  // Along the ray every factor but the caustics is a geometric sequence, exp(-a max(d, 0)) being min(exp(-a d), 1):
+  // the steps multiply instead of calling exp.
+  vec3 p = ro + rd * (j * dt), dp = rd * dt, aS = SIG_T / max(-uLw.y, 0.05);
+  vec3 gS = exp(aS * p.y), rS = exp(aS * dp.y), gA = exp(KDV * p.y), rA = exp(KDV * dp.y);
+  vec3 kS = uSunCol * uCausK * ph * SIG_S * shaftMean, kA = uAmb * (0.13 / PI) * SIG_S;
   for (int i = 0; i < VOL; i++){
     if (i >= n) break;
-    vec3 p = ro + rd * ((float(i) + j) * dt);
-    float depth = max(-p.y, 0.0), w = clamp(depth / DVOL, 0.0, 1.0) * 7.0;
+    float w = clamp(-p.y / DVOL, 0.0, 1.0) * 7.0;
     vec2 uv = p.xz / PATCH;
     float c = causVol(uv, w, 0.0), cb = causVol(uv, w, 3.0);
-    float cs = max(cb + GOD * (c - cb), 0.0) * shaftMean;
-    vec3 Ek = uSunCol * uCausK * exp(-SIG_T * depth / max(-uLw.y, 0.05)) * cs;
-    vec3 src = (Ek * ph + uAmb * exp(-KDV * depth) * (0.13 / PI)) * SIG_S;
-    acc += T * src * wgt;
-    T *= stepT;
+    acc += T * (kS * (min(gS, 1.0) * max(cb + GOD * (c - cb), 0.0)) + kA * min(gA, 1.0)) * wgt;
+    T *= stepT; p += dp; gS *= rS; gA *= rA;
   }
   Tr = T;
   return acc;
@@ -993,17 +1048,17 @@ vec3 brdfSun(vec3 n, vec3 v, vec3 l, vec3 alb, float rough){
 }
 // rippled sand with patches of darker pebbles; broad, slow variation across the lagoon
 vec3 bedAlb(vec2 xz, out vec3 n, float dist){
-  float w = vnoise(xz * 1.7) * 2.6;
+  float w = vnoiseL(xz * 1.7) * 2.6;
   float ph = dot(xz, vec2(0.83, 0.55)) * 26.0 + w * 3.0;
   float r = sin(ph) * 0.5 + 0.5;
-  float g1 = vnoise(xz * 180.0), g2 = vnoise(xz * 45.0);
+  float g1 = vnoiseT(xz * 180.0), g2 = vnoiseT(xz * 45.0);    // grain
   float amp = 0.06 * clamp(1.0 - uPixAng * dist * 40.0, 0.0, 1.0);
   vec2 dir = vec2(0.83, 0.55) * cos(ph) * amp;
   n = normalize(vec3(-dir.x + (g1 - 0.5) * 0.05, 1.0, -dir.y + (g2 - 0.5) * 0.05));
   vec3 c = mix(${v3(LOOK.sandLo)}, ${v3(LOOK.sandHi)}, r * 0.5 + g2 * 0.35 + g1 * 0.15);
-  float peb = smoothstep(0.78, 0.86, vnoise(xz * 9.0));
+  float peb = smoothstep(0.78, 0.86, vnoiseL(xz * 9.0));
   c = mix(c, c * vec3(0.55, 0.52, 0.5), peb * 0.6);
-  float big = vnoise(xz * 0.13) * 0.6 + vnoise(xz * 0.41 + 7.3) * 0.4;
+  float big = vnoiseL(xz * 0.13) * 0.6 + vnoiseL(xz * 0.41 + 7.3) * 0.4;
   return c * mix(0.92, 1.04, big);
 }
 
@@ -1131,7 +1186,7 @@ void main(){
   col = mix(col, hazeCol(), HAZE * (1.0 - exp(-dist / ${LOOK.fog.toFixed(1)})));
   o = vec4(max(mix(col, skyc, hz), 0.0), 1.0);
 }`, {
-  uSurf: surfRT.texture, uSurf2: surf2RT.texture, uFloor: floorRT.texture, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
+  uSurf: surfRT.texture, uSurf2: surf2RT.texture, uFloor: floorRT.texture, uHash: hashRT.texture, uNoise: noiseTex, uSliceA: sliceRT[0].texture, uSliceB: sliceRT[1].texture, uEnv: envRT.texture,
   uCam: camera.position, uSun: light.sun, uSunCol: light.col, uGlint: light.glint, uLw: light.lw, uCausK: light.causK, uAmb: light.amb,
   uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uRes: res,
   uTime: 0, uNight: 0, uPixAng: 0.001
