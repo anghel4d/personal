@@ -1,0 +1,13 @@
+// Cloudflare Workers, static assets only: `npx wrangler deploy` from this directory.
+// The site is the repository root; `.assetsignore` keeps the tooling out of the upload.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "anghel4d-site",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": false,
+  "assets": {
+    "directory": "./",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  }
+}

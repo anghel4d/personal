@@ -4,3 +4,6 @@ node_modules/
 tools/shader-cost/radvstats
 tools/safari-wgsl/Source
 tools/safari-wgsl/build/
+
+# Local state of wrangler dev
+.wrangler/
