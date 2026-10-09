@@ -9,12 +9,21 @@
 //   - those small pages (and removes the ones for posts that are gone);
 //   - the address map between the routes:begin and routes:end markers, which the page reads to keep its title and
 //     tags in step as it moves between addresses (for previewers that do run the page).
+// The picture, assets/card.jpg, is the scene by night with no text, square, shown as a thumbnail beside the title
+// (twitter:card summary). Its address carries a hash of the file, so previewers that keep pictures fetch a new one.
 // Rerun it after changing the statement, a panel's opening lines, or the posts.
 const fs = require("fs"), path = require("path");
 const ROOT = path.resolve(__dirname, "..", "..");
-const SITE = "https://anghel4d.com", NAME = "Matei Anghel", CARD = SITE + "/assets/card.jpg";
-const CARD_ALT = "Turquoise water over white sand, a path of glitter under the sun and a bank of cloud on the horizon, " +
-  "with the line \u201cMatei Anghel is a goated vibe coder and you should probably hire him.\u201d";
+const SITE = "https://anghel4d.com", NAME = "Matei Anghel";
+const card = fs.readFileSync(path.join(ROOT, "assets", "card.jpg"));
+const CARD = `${SITE}/assets/card.jpg?v=${require("crypto").createHash("sha1").update(card).digest("hex").slice(0, 8)}`;
+// its size, from the JPEG's frame header
+const CARD_WH = (b => {
+  for (let i = 2; i + 9 < b.length; i += 2 + b.readUInt16BE(i + 2))
+    if (b[i + 1] >= 0xc0 && b[i + 1] <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(b[i + 1])) return [b.readUInt16BE(i + 7), b.readUInt16BE(i + 5)];
+  throw new Error("assets/card.jpg: no frame header");
+})(card);
+const CARD_ALT = "The full moon over the sea at night, its light a path of glitter on the water, and a bank of cloud on the horizon.";
 const MARK = "written by tools/meta/build.js";
 const file = path.join(ROOT, "index.html");
 let html = fs.readFileSync(file, "utf8");
@@ -64,13 +73,13 @@ const tags = m => [
   `<meta property="og:description" content="${esc(m.desc)}">`,
   `<meta property="og:url" content="${m.url}">`,
   `<meta property="og:image" content="${CARD}">`,
-  `<meta property="og:image:width" content="1200">`,
-  `<meta property="og:image:height" content="630">`,
+  `<meta property="og:image:width" content="${CARD_WH[0]}">`,
+  `<meta property="og:image:height" content="${CARD_WH[1]}">`,
   `<meta property="og:image:alt" content="${esc(CARD_ALT)}">`,
   ...(m.date ? [`<meta property="article:published_time" content="${m.date}">`, `<meta property="article:author" content="${NAME}">`] : []),
-  `<meta name="twitter:card" content="summary_large_image">`,
+  `<meta name="twitter:card" content="summary">`,
   `<meta name="twitter:creator" content="@pyrusdotc">`,
-  `<meta name="theme-color" content="#E6F0F3">`
+  `<meta name="theme-color" content="#071824">`
 ].join("\n");
 
 const between = (s, a, b, body) => {

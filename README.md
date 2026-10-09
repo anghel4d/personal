@@ -6,6 +6,6 @@ The water follows [CAUSTIC//VOLUME](https://github.com/ScottieFox/caustic-volume
 
 The type is Newsreader (Production Type) and JetBrains Mono (JetBrains), both under the SIL Open Font License (`licenses/`), self-hosted and subset.
 
-Shared links unfurl with a title, opening words and a picture of the lagoon: every address (`/work/`, `/blog/<post>/` and so on) has a small page of its own for link previews, written by `node tools/meta/build.js` from the site's copy and posts.
+Shared links unfurl with a title, opening words and a small picture of the lagoon by night: every address (`/work/`, `/blog/<post>/` and so on) has a small page of its own for link previews, written by `node tools/meta/build.js` from the site's copy and posts.
 
 Open `index.html` through any static server (`python3 -m http.server`) to preview it. See `CLAUDE.md` for how it is built.
