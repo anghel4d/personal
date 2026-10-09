@@ -3,15 +3,16 @@
 // They read a page's meta tags without running it, and never see the part of an address after #, so each address
 // that can be shared is a real path with its own small page: /work/, /about/, /blog/, /contact/, /menu/ and
 // /blog/<post>/ (the post's title as a slug). Each holds that address's title, opening words and picture, then hands
-// over to the site at /#<address>, which shows the path again. This writes, all from index.html itself (the copy in
-// T.en and the posts' Markdown):
+// over to the site at /#<address>, which shows the path again. This writes, from the copy in index.html (T.en) and
+// the posts in blog/posts/ (read by blog/blog.js, as the page reads them):
 //   - the home page's tags, between the meta:begin and meta:end markers in its head;
 //   - those small pages (and removes the ones for posts that are gone);
 //   - the address map between the routes:begin and routes:end markers, which the page reads to keep its title and
-//     tags in step as it moves between addresses (for previewers that do run the page).
-// The picture, assets/card.jpg, is the scene by night with no text, square, shown as a thumbnail beside the title
-// (twitter:card summary). Its address carries a hash of the file, so previewers that keep pictures fetch a new one.
-// Rerun it after changing the statement, a panel's opening lines, or the posts.
+//     tags in step as it moves between addresses (for previewers that do run the page), and to find the posts' files.
+// Rerun it after adding, changing or removing a post (wrangler.jsonc runs it before each deploy).
+// The picture, assets/card.jpg, is the scene by night with no text, a golden rectangle. Its address carries a hash
+// of the file, so previewers that keep pictures fetch a new one.
+// Rerun it after changing the statement or a panel's opening lines.
 const fs = require("fs"), path = require("path");
 const ROOT = path.resolve(__dirname, "..", "..");
 const SITE = "https://anghel4d.com", NAME = "Matei Anghel";
@@ -32,17 +33,19 @@ let html = fs.readFileSync(file, "utf8");
 const t0 = html.indexOf("const T = {");
 if (t0 < 0) throw new Error("index.html: no `const T = {`");
 const T = new Function("return " + html.slice(t0 + "const T = ".length, html.indexOf("};\n", t0) + 1))().en;
-// the posts, as the page reads them
-const slug = h => h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-const posts = [...html.matchAll(/<script type="text\/markdown"([^>]*)>\n([\s\S]*?)\n<\/script>/g)].map(([, attrs, src]) => {
-  const at = k => (attrs.match(new RegExp(k + '="([^"]*)"')) || [])[1];
-  const blocks = src.trim().split(/\n\s*\n/).map(b => b.split("\n").map(l => l.trim()).join(" "));
-  const h = blocks[0].startsWith("# ") ? blocks.shift().slice(2).trim() : "";
-  return { tab: at("data-tab"), date: at("data-date"), h, slug: slug(h), first: blocks.find(b => !b.startsWith("#")) || "" };
-}).sort((a, b) => b.date.localeCompare(a.date));
+// the posts, as the page reads them: blog/blog.js over every file in blog/posts/
+const B = (w => (new Function("window", fs.readFileSync(path.join(ROOT, "blog", "blog.js"), "utf8"))(w), w.A4D_BLOG))({});
+const postDir = path.join(ROOT, "blog", "posts");
+const posts = B.newestFirst(fs.readdirSync(postDir).filter(f => f.endsWith(".html")).sort()
+  .flatMap(f => B.parse(fs.readFileSync(path.join(postDir, f), "utf8"), "blog/posts/" + f)))
+  .map(p => ({ ...p, first: p.blocks.find(b => !b.startsWith("#")) || "" }));
+const tabIds = T.tabs.map(x => x.id);
+for (const p of posts) if (!tabIds.includes(p.tab)) throw new Error(`${p.src}: <${p.tab}> is not a tab (${tabIds.join(", ")})`);
+for (const p of posts) if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new Error(`${p.src}: date="YYYY-MM-DD" is missing`);
+const seen = new Set(); for (const p of posts){ if (seen.has(p.slug)) throw new Error(`${p.src}: another post has the title "${p.h}"`); seen.add(p.slug); }
 
-// plain text, and its opening words: up to 200 characters, cut at a word
-const plain = s => s.replace(/<[^>]+>/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/__(.+?)__/g, "$1")
+// plain text (struck-through words keep their stroke, as combining marks), and its opening words: up to 200 characters, cut at a word
+const plain = s => s.replace(/<[^>]+>/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/~~(.+?)~~/g, (_, x) => [...x].map(c => c + "\u0336").join("")).replace(/__(.+?)__/g, "$1")
   .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").replace(/\s+/g, " ").trim();
 const opening = (s, n = 200) => s.length <= n ? s : s.slice(0, s.lastIndexOf(" ", n)).replace(/[\s,;:.\-]+$/, "") + "\u2026";
 const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -56,7 +59,7 @@ const routes = {
   blog: { title: T.blog, desc: `${open.t}: ${posts.filter(p => p.tab === open.id).map(p => p.h).join(" \u00b7 ")}` },
   contact: { title: T.contact, desc: T.contactLead }
 };
-for (const p of posts) routes["blog/" + p.slug] = { title: p.h, desc: opening(plain(p.first)), date: p.date };
+for (const p of posts) routes["blog/" + p.slug] = { title: p.h, desc: opening(plain(p.first)), date: p.date, src: p.src };
 for (const [r, m] of Object.entries(routes)) {
   m.url = r === "home" ? SITE + "/" : `${SITE}/${r}/`;
   m.doc = m.title === NAME ? NAME : `${m.title} \u00b7 ${NAME}`;
@@ -77,7 +80,7 @@ const tags = m => [
   `<meta property="og:image:height" content="${CARD_WH[1]}">`,
   `<meta property="og:image:alt" content="${esc(CARD_ALT)}">`,
   ...(m.date ? [`<meta property="article:published_time" content="${m.date}">`, `<meta property="article:author" content="${NAME}">`] : []),
-  `<meta name="twitter:card" content="summary">`,
+  `<meta name="twitter:card" content="summary_large_image">`,
   `<meta name="twitter:creator" content="@pyrusdotc">`,
   `<meta name="theme-color" content="#071824">`
 ].join("\n");
@@ -88,7 +91,7 @@ const between = (s, a, b, body) => {
   return s.slice(0, i + a.length) + "\n" + body + "\n" + s.slice(j);
 };
 html = between(html, "<!-- meta:begin -->", "<!-- meta:end -->", tags(routes.home));
-const map = Object.fromEntries(Object.entries(routes).map(([r, m]) => [r, { doc: m.doc, title: m.title, desc: m.desc, url: m.url, type: m.type }]));
+const map = Object.fromEntries(Object.entries(routes).map(([r, m]) => [r, { doc: m.doc, title: m.title, desc: m.desc, url: m.url, type: m.type, src: m.src }]));
 html = between(html, "<!-- routes:begin -->", "<!-- routes:end -->",
   `<script type="application/json" id="routes">${JSON.stringify(map).replace(/</g, "\\u003c")}</script>`);
 fs.writeFileSync(file, html);

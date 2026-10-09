@@ -5,6 +5,8 @@
   "name": "anghel4d-site",
   "compatibility_date": "2026-10-08",
   "workers_dev": false,
+  // the link previews and the blog's address map, from the posts in blog/posts/, written before each deploy
+  "build": { "command": "node tools/meta/build.js" },
   "routes": [
     { "pattern": "anghel4d.com", "custom_domain": true },
     { "pattern": "www.anghel4d.com", "custom_domain": true }
