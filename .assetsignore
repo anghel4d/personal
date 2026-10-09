@@ -1,0 +1,12 @@
+# Not part of the published site.
+.git
+.gitignore
+.assetsignore
+wrangler.jsonc
+CLAUDE.md
+README.md
+LICENSE
+tools
+node_modules
+.DS_Store
+*.log
