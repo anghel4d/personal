@@ -31,5 +31,5 @@
   // the posts in these files (paths relative to base); a file that is gone is skipped
   const load = (files, base) => Promise.all(files.map(f => fetch(new URL(f, base)).then(r => r.ok ? r.text() : "").catch(() => "").then(t => parse(t, f))))
     .then(lists => newestFirst(lists.flat()));
-  root.A4D_BLOG = { esc, inline, slug, parse, load, newestFirst };
+  root.A4D_BLOG = { esc, inline, parse, load, newestFirst };
 })(typeof window !== "undefined" ? window : globalThis);

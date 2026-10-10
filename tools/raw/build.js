@@ -12,18 +12,7 @@
 // The page sends a browser without JavaScript here (<noscript>), and ?raw (or &raw) on any address does the same.
 // tools/meta/build.js runs this too. Rerun it after changing the copy, the views, the styles or the posts.
 const fs = require("fs"), path = require("path");
-const ROOT = path.resolve(__dirname, "..", "..");
-const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-const cut = (a, b, from = 0) => { const i = html.indexOf(a, from), j = html.indexOf(b, i); if (i < 0 || j < 0) throw new Error(`index.html: no ${a} ... ${b}`); return html.slice(i, j + b.length); };
-
-// the copy, the views and the posts, as the page has them
-const T = new Function("return " + cut("const T = {", "};\n").slice("const T = ".length, -2))();
-const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const VIEWS = new Function("esc", cut("/* views:begin", "/* views:end */") + "\nreturn VIEWS;")(esc);
-const B = (w => (new Function("window", fs.readFileSync(path.join(ROOT, "blog", "blog.js"), "utf8"))(w), w.A4D_BLOG))({});
-const postDir = path.join(ROOT, "blog", "posts");
-const posts = B.newestFirst(fs.readdirSync(postDir).filter(f => f.endsWith(".html")).sort()
-  .flatMap(f => B.parse(fs.readFileSync(path.join(postDir, f), "utf8"), "blog/posts/" + f)));
+const { ROOT, html, cut, T, B, VIEWS, posts } = require("../site.js")(), esc = B.esc;
 
 // both languages: English as the page has it, French beside it with its ids marked, so no id is there twice
 const both = (en, fr, tag = "span") => en === fr ? en : `<${tag} class="l-en">${en}</${tag}><${tag} class="l-fr" lang="fr">${fr}</${tag}>`;
@@ -60,7 +49,7 @@ const RAW_CSS = fs.readFileSync(path.join(__dirname, "raw.css"), "utf8")
   .replace("/* DAY */", DAY).replace("/* NIGHT */", NIGHT).replace("/* DAY */", DAY).replace("/* NIGHT */", NIGHT);
 
 const icon = (html.match(/<link rel="icon"[^>]*>/) || [""])[0];
-const mark = cut('<a class="chrome tl"', "</a>").replace('href="#"', 'href="#"');
+const mark = cut('<a class="chrome tl"', "</a>");
 const menuLinks = ["work", "about", "blog", "contact"].map(r => `<a href="#${r}">${both(T.en[r], T.fr[r])}</a>`).join("\n    ");
 const ext = cut('<div class="ext">', "</div>");
 
@@ -114,5 +103,5 @@ ${mark}
 `;
 fs.mkdirSync(path.join(ROOT, "raw"), { recursive: true });
 fs.writeFileSync(path.join(ROOT, "raw", "index.html"), page);
-if (/<script/i.test(page.replace(/<script type="application\/json"[\s\S]*?<\/script>/g, ""))) throw new Error("raw/index.html holds a script");
+if (/<script/i.test(page)) throw new Error("raw/index.html holds a script");
 console.log(`raw/index.html  ${(page.length / 1024).toFixed(0)} KB, ${posts.length} posts, no script`);

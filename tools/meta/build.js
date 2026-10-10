@@ -15,7 +15,7 @@
 // of the file, so previewers that keep pictures fetch a new one.
 // Rerun it after changing the statement or a panel's opening lines.
 const fs = require("fs"), path = require("path");
-const ROOT = path.resolve(__dirname, "..", "..");
+const site = require("../site.js")(), { ROOT, B } = site, T = site.T.en;
 const SITE = "https://anghel4d.com", NAME = "Matei Anghel";
 const card = fs.readFileSync(path.join(ROOT, "assets", "card.jpg"));
 const CARD = `${SITE}/assets/card.jpg?v=${require("crypto").createHash("sha1").update(card).digest("hex").slice(0, 8)}`;
@@ -28,28 +28,14 @@ const CARD_WH = (b => {
 const CARD_ALT = "The full moon over the sea at night, its light a path of glitter on the water, and a bank of cloud on the horizon.";
 const MARK = "written by tools/meta/build.js";
 const file = path.join(ROOT, "index.html");
-let html = fs.readFileSync(file, "utf8");
-
-// the copy, as the page defines it
-const t0 = html.indexOf("const T = {");
-if (t0 < 0) throw new Error("index.html: no `const T = {`");
-const T = new Function("return " + html.slice(t0 + "const T = ".length, html.indexOf("};\n", t0) + 1))().en;
-// the posts, as the page reads them: blog/blog.js over every file in blog/posts/
-const B = (w => (new Function("window", fs.readFileSync(path.join(ROOT, "blog", "blog.js"), "utf8"))(w), w.A4D_BLOG))({});
-const postDir = path.join(ROOT, "blog", "posts");
-const posts = B.newestFirst(fs.readdirSync(postDir).filter(f => f.endsWith(".html")).sort()
-  .flatMap(f => B.parse(fs.readFileSync(path.join(postDir, f), "utf8"), "blog/posts/" + f)))
-  .map(p => ({ ...p, first: p.blocks.find(b => !b.startsWith("#")) || "" }));
-const tabIds = T.tabs.map(x => x.id);
-for (const p of posts) if (!tabIds.includes(p.tab)) throw new Error(`${p.src}: <${p.tab}> is not a tab (${tabIds.join(", ")})`);
-for (const p of posts) if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date)) throw new Error(`${p.src}: date="YYYY-MM-DD" is missing`);
-const seen = new Set(); for (const p of posts){ if (seen.has(p.slug)) throw new Error(`${p.src}: another post has the title "${p.h}"`); seen.add(p.slug); }
+let html = site.html;
+const posts = site.posts.map(p => ({ ...p, first: p.blocks.find(b => !b.startsWith("#")) || "" }));
 
 // plain text (struck-through words keep their stroke, as combining marks), and its opening words: up to 200 characters, cut at a word
 const plain = s => s.replace(/<[^>]+>/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/~~(.+?)~~/g, (_, x) => [...x].map(c => c + "\u0336").join("")).replace(/__(.+?)__/g, "$1")
   .replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1").replace(/\s+/g, " ").trim();
 const opening = (s, n = 200) => s.length <= n ? s : s.slice(0, s.lastIndexOf(" ", n)).replace(/[\s,;:.\-]+$/, "") + "\u2026";
-const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const esc = B.esc;
 
 const home = plain(T.statement), open = T.tabs.find(x => x.open);
 const routes = {
