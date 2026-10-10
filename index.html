@@ -655,18 +655,11 @@ A4D_SHOWN.then(() => setTimeout(() => (window.requestIdleCallback || setTimeout)
    WebGPU renderer and the three.js one (the fallback) take what they need from lagoon(), so there is one of each. It
    is computed on the first call, when a renderer starts, not while the page is parsed. */
 let LAGOON_ = null;
-/* Under a panel the scene holds its last frame once the veil is up (0.7 s) and any change of theme has settled, so the
-   page's own motion has the GPU to itself. A resize or a return to the tab draws again for a moment (wake). */
-let OPEN_AT = -1;
-const sceneHeld = (S, now) => {
-  if (!S.open) return void (OPEN_AT = -1), false;
-  if (OPEN_AT < 0) OPEN_AT = now;
-  return now - OPEN_AT > 700 && Math.abs(S.targetNight - S.night) < 0.003;
-};
-const sceneWake = () => { if (OPEN_AT >= 0) OPEN_AT = performance.now(); };
 /* The veil's frosting is the scene's own blur: under a panel the final pass widens its blur by up to 18 CSS pixels
-   (the frosted glass a backdrop filter would make), eased in and out with the veil, so the held frame carries it and
-   the compositor has no full-screen filter to run on every frame it draws. */
+   (the frosted glass a backdrop filter would make), eased in and out with the veil. It reads the HDR frame's mip
+   pyramid, which the defocus already builds every frame (a power-of-two down chain, each level read back through the
+   hardware's bilinear filter in a 4-tap B-spline), so the frosting costs almost nothing and the compositor has no
+   full-screen filter to run. The scene keeps moving behind it, at 15 frames a second. */
 let VEIL = 0, VEIL_T = -1;
 const sceneVeil = S => {
   const now = performance.now(), dt = VEIL_T < 0 ? 0 : Math.min(0.05, (now - VEIL_T) / 1000); VEIL_T = now;
@@ -1775,7 +1768,7 @@ function frame(){
 }
 const sunColDay = new THREE.Vector3(...SUN_COL), moonCol = new THREE.Vector3(...MOON_COL);
 frame();
-addEventListener("resize", () => { frame(); sceneWake(); }, { passive: true });
+addEventListener("resize", frame, { passive: true });
 
 // lighting derived from the light's direction: refracted beam, flat-water transmission, ambient light under water
 function lighting(n){
@@ -1800,7 +1793,7 @@ let fence = null, fenceT = 0, gpuMs = 0, lateN = 0, underN = 0;
 let envAt = -1, envNight = -1;
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
-  if (running){ sceneWake(); lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 const yaw = { v: 0 }, pitch = { v: 0 };
 function tick(now){
@@ -1812,7 +1805,6 @@ function tick(now){
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (fence && now - fenceT > 1000){ gl.deleteSync(fence); fence = null; }          // a fence that never signals tells nothing
-  if (sceneHeld(S, now)) return;
   if (!S.open){
     lateN = fence || gpuMs > FRAME_MS + 4 ? lateN + 1 : 0;     // still running, or last seen done a refresh too late
     underN = !fence && gpuMs < FRAME_MS * 0.55 ? underN + 1 : 0;
@@ -2979,7 +2971,6 @@ function tick(now){
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (inFlight > 1) return;                    // two frames behind: let the GPU catch up rather than queue a third
-  if (sceneHeld(S, now)) return;
   if (!S.open && gpuLog.length >= 3){
     const ms = [...gpuLog].sort((a, b) => a - b)[gpuLog.length >> 1];    // the median of the last five
     const per = ms / costAt(quality);
@@ -3000,10 +2991,10 @@ const oom = await device.popErrorScope(), bad = await device.popErrorScope();
 if (bad || oom){ device.destroy(); throw new Error((bad || oom).message); }
 await device.queue.onSubmittedWorkDone();
 root.classList.add("gl");
-addEventListener("resize", () => { frame(); settle = 3; gpuLog.length = 0; sceneWake(); }, { passive: true });
+addEventListener("resize", () => { frame(); settle = 3; gpuLog.length = 0; }, { passive: true });
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !dead;
-  if (running){ sceneWake(); lastDraw = -1; nextDraw = 0; settle = 2; gpuLog.length = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ lastDraw = -1; nextDraw = 0; settle = 2; gpuLog.length = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 // a lost device (a driver reset, the GPU taken away) hands over to the three.js renderer
 device.lost.then(info => { dead = true; if (info.reason !== "destroyed" && window.A4D_FALLBACK) window.A4D_FALLBACK(); });
