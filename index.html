@@ -116,6 +116,7 @@ a{color:inherit}
 .poise.broke i{background:var(--ink);transform:scaleX(1.3) !important;opacity:0;transition:transform .2s cubic-bezier(.2,.7,.2,1),opacity .2s ease .04s}
 .layer.poised > .inner{transition:opacity .22s ease,transform .14s ease-out}
 .layer.leave > .inner{opacity:0;transform:translateY(-34px) !important;transition:opacity .16s ease,transform .16s cubic-bezier(.4,0,.6,1)}
+.layer.gone{display:block;pointer-events:none}          /* a panel leaving as its neighbour comes in */
 .layer.rise > .inner{transform:translateY(40px)}
 .layer.rise.shown > .inner{transform:none}
 .poise.up{bottom:auto;top:calc(var(--pad) + 8px + env(safe-area-inset-top,0px));flex-direction:column-reverse}
@@ -523,8 +524,10 @@ let pz = 0, dir = 1, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = 0, touch = null, 
 const layerOf = () => current === "home" ? null : document.getElementById(current), statementEl = document.getElementById("statement");
 const atEdge = (el, d) => !el || (d > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 2 : el.scrollTop <= 1);
 const level = d => dir === d ? pz : 0;                     // a gesture the other way starts from nothing
+let pzLabel = "";
 function pzDraw(){
-  const el = layerOf();
+  const el = layerOf(), label = pz > 0 ? T[lang][dir > 0 ? "next" : "prev"] + " · " + T[lang][besideOf(dir)] : pzLabel;
+  if (label !== pzLabel) poiseLabel.textContent = pzLabel = label;
   poise.classList.toggle("up", dir < 0);
   poise.style.opacity = String(Math.min(1, pz * 2.5));
   poiseFill.style.transform = `scaleX(${pz})`;
@@ -539,29 +542,29 @@ function pzTick(now){
   pzDraw();
   if (pz > 0) pzRaf = requestAnimationFrame(pzTick);
 }
+// an event only moves the numbers; the gauge is drawn once a frame (pzTick), so a wheel's dozens of events a second
+// write nothing to the page, and reading the edge (atEdge) never has to wait for a style update
 function pzSet(v, d){
   if (breaking || !besideOf(d)) return;
   dir = d; pz = Math.min(1, Math.max(0, v)); pzAt = performance.now();
-  const label = T[lang][d > 0 ? "next" : "prev"] + " · " + T[lang][besideOf(d)];
-  if (poiseLabel.textContent !== label) poiseLabel.textContent = label;     // a wheel sends dozens of events; lay out once
-  pzDraw();
   if (pz >= 1) return pzBreak();
   if (!pzRaf) pzRaf = requestAnimationFrame(pzTick);
 }
+// full: the neighbour comes in at once, in the same frame, while the panel it replaces leaves (0.16 s, still shown
+// for that long, untouchable)
 function pzBreak(){
-  breaking = true;
-  const from = layerOf(), to = besideOf(dir), back = dir < 0;
-  poise.classList.add("broke"); if (from) from.classList.add(back ? "sink" : "leave");
-  setTimeout(() => {
-    if (from){ from.classList.remove("leave", "sink", "poised"); from.firstElementChild.style.transform = ""; }
-    statementEl.style.translate = "";
-    const next = document.getElementById(to); if (next) next.classList.add(back ? "drop" : "rise");
-    go(to);
-    if (!next) return void (poise.classList.remove("broke"), pz = 0, armed = 0, touch = null, breaking = false, pzDraw());
-    if (back) next.scrollTop = next.scrollHeight;             // going back lands at the end of the one before
-    setTimeout(() => next.classList.remove("rise", "drop"), 700);
-    poise.classList.remove("broke"); pz = 0; armed = 0; touch = null; breaking = false; pzDraw();
-  }, 170);
+  const from = layerOf(), to = besideOf(dir), back = dir < 0, next = document.getElementById(to);
+  if (pzRaf){ cancelAnimationFrame(pzRaf); pzRaf = 0; }
+  poise.classList.add("broke"); setTimeout(() => poise.classList.remove("broke"), 200);
+  if (from){
+    from.classList.add(back ? "sink" : "leave", "gone");
+    setTimeout(() => { from.classList.remove("leave", "sink", "gone", "poised"); from.firstElementChild.style.transform = ""; }, 160);
+  }
+  statementEl.style.translate = "";
+  if (next){ next.classList.add(back ? "drop" : "rise"); setTimeout(() => next.classList.remove("rise", "drop"), 300); }
+  go(to);
+  if (next && back) next.scrollTop = next.scrollHeight;      // going back lands at the end of the one before
+  pz = 0; armed = 0; touch = null; pzDraw();
 }
 function pzReset(){ pz = 0; armed = 0; touch = null; pzDraw(); }
 addEventListener("wheel", e => {
@@ -569,7 +572,7 @@ addEventListener("wheel", e => {
   if (!d || breaking || !besideOf(d)) return;
   if (!atEdge(layerOf(), d)){ armed = 0; return; }
   if (armed !== d && quiet) armed = d;                     // a new gesture that starts at the edge
-  if (armed === d) pzSet(level(d) + Math.abs(e.deltaY) * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1) / 460, d);
+  if (armed === d) pzSet(level(d) + Math.abs(e.deltaY) * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1) / 230, d);
 }, { passive: true });
 addEventListener("touchstart", e => {
   const el = layerOf();
@@ -577,10 +580,10 @@ addEventListener("touchstart", e => {
 }, { passive: true });
 addEventListener("touchmove", e => {
   if (!touch) return;
-  const v = touch.base + (touch.y - e.touches[0].clientY) / 135;   // a drag up the screen leans toward the next
+  const v = touch.base + (touch.y - e.touches[0].clientY) / 70;    // a drag up the screen leans toward the next
   if (v > 0 && touch.end && besideOf(1)) pzSet(v, 1);
   else if (v < 0 && touch.top && besideOf(-1)) pzSet(-v, -1);
-  else if (pz > 0){ pz = 0; pzDraw(); }
+  else if (pz > 0){ pz = 0; if (!pzRaf) pzRaf = requestAnimationFrame(pzTick); }
 }, { passive: true });
 addEventListener("touchend", () => { touch = null; pzAt = 0; if (pz > 0 && !pzRaf) pzRaf = requestAnimationFrame(pzTick); }, { passive: true });
 addEventListener("keydown", e => {
