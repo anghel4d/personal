@@ -464,7 +464,9 @@ function show(id){
   LAYERS.forEach(l => { const el = document.getElementById(l); el.classList.remove("shown"); el.classList.remove("on"); });
   if (typeof pzReset === "function" && !breaking) pzReset();
   current = layer; S.open = layer !== "home"; setMeta(id);
-  if (layer === "home"){ body.classList.remove("open"); menuBtn.setAttribute("aria-expanded","false"); updateMenuLabel(); return; }
+  if (layer === "home"){
+    document.getElementById("statement").getAnimations().forEach(a => a.transitionProperty || a.cancel());   // a leave held by the poise
+    body.classList.remove("open"); menuBtn.setAttribute("aria-expanded","false"); updateMenuLabel(); return; }
   body.classList.add("open");
   const el = document.getElementById(layer), at = post && document.getElementById("post-" + post);
   if (at){ fold(at, true, true); openPosts.add(post); }
@@ -521,7 +523,7 @@ const ORDER = ["home", "menu", "work", "about", "blog", "contact"];
 const besideOf = d => { const i = ORDER.indexOf(current); return i < 0 ? undefined : ORDER[i + d]; };   // d: 1 next, -1 back
 const poise = document.getElementById("poise"), poiseFill = poise.querySelector("i"), poiseLabel = poise.querySelector("span");
 let pz = 0, dir = 1, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = 0, touch = null, breaking = false;
-const layerOf = () => current === "home" ? null : document.getElementById(current);
+const layerOf = () => current === "home" ? null : document.getElementById(current), statementEl = document.getElementById("statement");
 const atEdge = (el, d) => !el || (d > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 2 : el.scrollTop <= 1);
 const level = d => dir === d ? pz : 0;                     // a gesture the other way starts from nothing
 let pzLabel = "";
@@ -534,12 +536,23 @@ function pzDraw(){
   const lean = pz > 0 ? `${(-16 * dir * pz).toFixed(2)}px` : "";
   if (el){ el.classList.toggle("poised", pz > 0); el.firstElementChild.style.transform = lean && `translateY(${lean})`; }
 }
+// on the ocean the statement leans with the gauge, eased toward it each frame (a wheel moves the gauge in steps), and
+// settles back the same way as it drains
+let stLean = 0, stAt = 0;
+function stDraw(now){
+  const to = current === "home" ? -24 * dir * pz : 0, dt = stAt ? Math.min(50, now - stAt) : 16.7;
+  stAt = now; stLean += (to - stLean) * (1 - Math.exp(-dt / 55));
+  if (Math.abs(stLean - to) < 0.05) stLean = to;
+  statementEl.style.translate = stLean ? `0 ${stLean.toFixed(2)}px` : "";
+  return stLean !== to;
+}
 function pzTick(now){
   pzRaf = 0;
   if (breaking) return;
   if (!touch && now - pzAt > 160) pz = Math.max(0, pz - 1.6 * 16.7 / 1000 * (1 + pz));   // drains in about half a second
   pzDraw();
-  if (pz > 0) pzRaf = requestAnimationFrame(pzTick);
+  const easing = stDraw(now);
+  if (pz > 0 || easing) pzRaf = requestAnimationFrame(pzTick); else stAt = 0;
 }
 // an event only moves the numbers; the gauge is drawn once a frame (pzTick), so a wheel's dozens of events a second
 // write nothing to the page, and reading the edge (atEdge) never has to wait for a style update
@@ -560,7 +573,13 @@ function pzBreak(){
     setTimeout(() => { from.classList.remove("leave", "sink", "gone", "poised"); from.firstElementChild.style.transform = ""; }, 160);
   }
   if (next){ next.classList.add(back ? "drop" : "rise"); setTimeout(() => next.classList.remove("rise", "drop"), 300); }
+  const at = statementEl.style.translate || "0 0";
+  stLean = 0; stAt = 0; statementEl.style.translate = "";
   go(to);
+  // the statement goes the way the panels go: on up from where it leaned (held there while it fades), and down from
+  // above when the ocean comes back
+  if (!from) statementEl.animate([{ translate: at }, { translate: "0 -34px" }], { duration: 160, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" });
+  else if (to === "home") statementEl.animate([{ translate: "0 -24px" }, { translate: "0 0" }], { duration: 300, easing: "cubic-bezier(.2,.7,.2,1)" });
   if (next && back) next.scrollTop = next.scrollHeight;      // going back lands at the end of the one before
   pz = 0; armed = 0; touch = null; pzDraw();
 }
