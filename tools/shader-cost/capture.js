@@ -20,7 +20,9 @@ const fs = require('fs');
     }
   });
   const p = await ctx.newPage();
-  await p.goto(url);
+  // ?inline keeps the scene on the page's thread, where the hooks above can see it (it runs in a worker otherwise)
+  const u = new URL(url); u.searchParams.set('inline', '');
+  await p.goto(u.href);
   // every pipeline exists before the first frame
   await p.waitForFunction(() => window.__pipes.length > 0 && ((window.A4D_STATE || {}).stats || {}).frames >= 1, null, { timeout: 600000, polling: 500 });
   const r = await p.evaluate(() => ({ mods: window.__mods, pipes: window.__pipes }));

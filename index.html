@@ -99,13 +99,13 @@ a{color:inherit}
 /* veil + panels */
 .veil{position:fixed;inset:0;z-index:4;background:var(--veil);
   -webkit-backdrop-filter:blur(18px) saturate(1.15);backdrop-filter:blur(18px) saturate(1.15);
-  opacity:0;pointer-events:none;transition:opacity .6s ease}
+  opacity:0;pointer-events:none;transition:opacity .22s ease}
 .open .veil{opacity:1;pointer-events:auto}
 .layer{position:fixed;inset:0;z-index:5;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch;
   padding:calc(var(--pad) + 64px + env(safe-area-inset-top,0px)) var(--pad) calc(var(--pad) + 72px + env(safe-area-inset-bottom,0px))}
 .layer.on{display:block}
 .panel.on{-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 calc(var(--pad) + 70px),#000 calc(100% - var(--pad) - 80px),transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 calc(var(--pad) + 70px),#000 calc(100% - var(--pad) - 80px),transparent 100%)}
-.layer > .inner{opacity:0;transform:translateY(8px);transition:opacity .55s ease .1s,transform .55s ease .1s}
+.layer > .inner{opacity:0;transform:translateY(8px);transition:opacity .22s ease,transform .26s cubic-bezier(.2,.7,.2,1)}
 .layer.shown > .inner{opacity:1;transform:none}
 .close{position:fixed;z-index:6}
 /* poise: scrolling on past a panel's end fills a hairline gauge; full, the panel gives way to the next */
@@ -113,13 +113,13 @@ a{color:inherit}
   display:flex;flex-direction:column;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;
   text-transform:lowercase;white-space:nowrap;color:var(--ink-soft);opacity:0;pointer-events:none}
 .poise i{display:block;width:128px;height:1px;background:currentColor;transform:scaleX(0)}
-.poise.broke i{background:var(--ink);transform:scaleX(1.3) !important;opacity:0;transition:transform .32s cubic-bezier(.2,.7,.2,1),opacity .32s ease .08s}
-.layer.poised > .inner{transition:opacity .55s ease .1s,transform .14s ease-out}
-.layer.leave > .inner{opacity:0;transform:translateY(-34px) !important;transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.6,1)}
+.poise.broke i{background:var(--ink);transform:scaleX(1.3) !important;opacity:0;transition:transform .2s cubic-bezier(.2,.7,.2,1),opacity .2s ease .04s}
+.layer.poised > .inner{transition:opacity .22s ease,transform .14s ease-out}
+.layer.leave > .inner{opacity:0;transform:translateY(-34px) !important;transition:opacity .16s ease,transform .16s cubic-bezier(.4,0,.6,1)}
 .layer.rise > .inner{transform:translateY(40px)}
 .layer.rise.shown > .inner{transform:none}
 .poise.up{bottom:auto;top:calc(var(--pad) + 8px + env(safe-area-inset-top,0px));flex-direction:column-reverse}
-.layer.sink > .inner{opacity:0;transform:translateY(34px) !important;transition:opacity .3s ease,transform .3s cubic-bezier(.4,0,.6,1)}
+.layer.sink > .inner{opacity:0;transform:translateY(34px) !important;transition:opacity .16s ease,transform .16s cubic-bezier(.4,0,.6,1)}
 .layer.drop > .inner{transform:translateY(-40px)}
 .layer.drop.shown > .inner{transform:none}
 
@@ -172,7 +172,7 @@ nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-
 .panel .contact a:hover{text-decoration-color:currentColor}
 .panel .contact .big{font-style:italic;font-size:clamp(26px,3vw,38px);font-variation-settings:"opsz" 60;font-weight:300;display:inline-block;margin:.2em 0 .6em}
 
-.open .statement{opacity:0;filter:blur(6px);transition:opacity .5s ease,filter .5s ease}
+.open .statement{opacity:0;filter:blur(6px);transition:opacity .2s ease,filter .2s ease}
 
 @media (max-width:640px){
   .statement{bottom:calc(62vh + 2.5vh);font-size:clamp(21px,6vw,27px);line-height:1.3}
@@ -369,7 +369,7 @@ function fold(d, open, still){
   if (still || !b.animate) return void (d.open = open);
   const h = b.scrollHeight + "px";
   b.animate(open ? [{ height: "0px", opacity: 0 }, { height: h, opacity: 1 }] : [{ height: h, opacity: 1 }, { height: "0px", opacity: 0 }],
-    { duration: open ? 520 : 340, easing: open ? "cubic-bezier(.2,.7,.2,1)" : "cubic-bezier(.4,0,.6,1)" })
+    { duration: open ? 300 : 200, easing: open ? "cubic-bezier(.2,.7,.2,1)" : "cubic-bezier(.4,0,.6,1)" })
     .onfinish = () => { if (!d.classList.contains("unfolded")) d.open = false; };
 }
 // an address that names a post unfolds it, and the reading starts there (a reading start draws no ring)
@@ -463,7 +463,7 @@ function show(id){
   if (layer === "blog" && !POSTS) loadBlog();
   el.classList.add("on"); el.scrollTop = 0;
   if (at) at.scrollIntoView({ block: "start" });
-  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("shown")));
+  void el.offsetWidth; el.classList.add("shown");          // laid out now, so it fades in from this very frame
   menuBtn.setAttribute("aria-expanded", String(layer === "menu"));
   updateMenuLabel();
   // focus lands on the heading, or on the post an address names (a reading start, so it draws no ring)
@@ -553,7 +553,7 @@ function pzBreak(){
     if (back) next.scrollTop = next.scrollHeight;             // going back lands at the end of the one before
     setTimeout(() => next.classList.remove("rise", "drop"), 700);
     poise.classList.remove("broke"); pz = 0; armed = 0; touch = null; breaking = false; pzDraw();
-  }, 300);
+  }, 170);
 }
 function pzReset(){ pz = 0; armed = 0; touch = null; pzDraw(); }
 addEventListener("wheel", e => {
@@ -637,12 +637,21 @@ A4D_SHOWN.then(() => { const el = document.createElement("script"); el.src = new
 A4D_SHOWN.then(() => setTimeout(() => { if (document.fonts) for (const f of ["italic 300 1em Newsreader", "1em Newsreader"]) document.fonts.load(f).catch(() => {}); loadBlog(); }, 1500));
 
 </script>
-<script>
+<script type="text/x-lagoon">
 /* ================= the lagoon: what both renderers share =================
    The tunables, the sea's spectra and their slope statistics, the noise tables and the framing, as plain data. The
    WebGPU renderer and the three.js one (the fallback) take what they need from lagoon(), so there is one of each. It
    is computed on the first call, when a renderer starts, not while the page is parsed. */
 let LAGOON_ = null;
+/* Under a panel the scene holds its last frame once the veil is up (0.7 s) and any change of theme has settled, so the
+   page's own motion has the GPU to itself. A resize or a return to the tab draws again for a moment (wake). */
+let OPEN_AT = -1;
+const sceneHeld = (S, now) => {
+  if (!S.open) return void (OPEN_AT = -1), false;
+  if (OPEN_AT < 0) OPEN_AT = now;
+  return now - OPEN_AT > 700 && Math.abs(S.targetNight - S.night) < 0.003;
+};
+const sceneWake = () => { if (OPEN_AT >= 0) OPEN_AT = performance.now(); };
 const lagoon = () => LAGOON_ || (LAGOON_ = (() => {
 /* ---------- the look, in one place ---------- */
 const LOOK = {
@@ -844,7 +853,7 @@ const SIG = [0, 1, 2].map(i => [LOOK.sigA[i], LOOK.sigS[i]]);
 return { LOOK, N, L, DBED, SEA, CHOP, RMS, CHOPK, LOOP, DVOL, mulberry, H0_DATA, SLOPE, N2, L2, H0S_DATA, SLOPE2, FLOOR_RES, CAUS_EDGE, SLICES, SLICE_RES, ENV_W, ENV_H, HASH_O, HASH_W, HASH_H, NOISE_N, NOISE_DATA, EYE, GT7, HZ, HORIZON, PHONE_F, PX_PER_CSS, GLINT_EL, MOON, MOON_TEX, MOON_TEX_N, SUN_COL, MOON_COL, fresnelJS, SIG };
 })());
 </script>
-<script>
+<script type="text/x-lagoon">
 /* ================= the lagoon on three.js (WebGL2): the fallback where WebGPU is missing =================
    The water follows CAUSTIC//VOLUME by Scottie (MIT, see licenses/caustic-volume.txt): a choppy JONSWAP FFT sea,
    photon-grid caustics on a sand bed and through a stack of depth slices, light shafts measured against the
@@ -1207,8 +1216,8 @@ draw(shader(`float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += 
 void main(){ o = vec4(hash12(floor(gl_FragCoord.xy) + vec2(${HASH_O[0]}.0, ${HASH_O[1]}.0)), 0.0, 0.0, 1.0); }`, {}), hashRT);
 // the moon's photograph, mipmapped; a flat grey until it arrives
 const moonTex = new THREE.DataTexture(new Uint8Array([200, 200, 200, 255]), 1, 1); moonTex.needsUpdate = true;
-{ const img = new Image(); img.onload = () => { const t = new THREE.Texture(img); t.flipY = false; t.encoding = THREE.sRGBEncoding;
-    t.minFilter = THREE.LinearMipmapLinearFilter; t.needsUpdate = true; mWater.uniforms.uMoon.value = t; }; img.src = MOON_TEX; }
+fetch(MOON_TEX).then(r => r.blob()).then(b => createImageBitmap(b)).then(img => { const t = new THREE.Texture(img); t.flipY = false;
+  t.encoding = THREE.sRGBEncoding; t.minFilter = THREE.LinearMipmapLinearFilter; t.needsUpdate = true; mWater.uniforms.uMoon.value = t; }).catch(() => {});
 const noiseTex = new THREE.DataTexture(NOISE_DATA, NOISE_N, NOISE_N, THREE.RGFormat, THREE.UnsignedByteType);
 noiseTex.wrapS = noiseTex.wrapT = THREE.RepeatWrapping; noiseTex.magFilter = noiseTex.minFilter = THREE.LinearFilter; noiseTex.needsUpdate = true;
 const NOISE_GLSL = `
@@ -1745,7 +1754,7 @@ function frame(){
 }
 const sunColDay = new THREE.Vector3(...SUN_COL), moonCol = new THREE.Vector3(...MOON_COL);
 frame();
-addEventListener("resize", frame, { passive: true });
+addEventListener("resize", () => { frame(); sceneWake(); }, { passive: true });
 
 // lighting derived from the light's direction: refracted beam, flat-water transmission, ambient light under water
 function lighting(n){
@@ -1770,7 +1779,7 @@ let fence = null, fenceT = 0, gpuMs = 0, lateN = 0, underN = 0;
 let envAt = -1, envNight = -1;
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
-  if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ sceneWake(); lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 const yaw = { v: 0 }, pitch = { v: 0 };
 function tick(now){
@@ -1782,6 +1791,7 @@ function tick(now){
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (fence && now - fenceT > 1000){ gl.deleteSync(fence); fence = null; }          // a fence that never signals tells nothing
+  if (sceneHeld(S, now)) return;
   if (!S.open){
     lateN = fence || gpuMs > FRAME_MS + 4 ? lateN + 1 : 0;     // still running, or last seen done a refresh too late
     underN = !fence && gpuMs < FRAME_MS * 0.55 ? underN + 1 : 0;
@@ -1827,7 +1837,7 @@ raf = requestAnimationFrame(tick);
 }
 
 </script>
-<script>
+<script type="text/x-lagoon">
 /* ================= the lagoon on WebGPU =================
    The same picture as the three.js renderer, drawn with compute where it pays. Each frame: one compute pass for the
    sea (each FFT line in workgroup memory with the spectrum evolved as it loads, the choppy surface inverted and its
@@ -2947,6 +2957,7 @@ function tick(now){
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (inFlight > 1) return;                    // two frames behind: let the GPU catch up rather than queue a third
+  if (sceneHeld(S, now)) return;
   if (!S.open && gpuLog.length >= 3){
     const ms = [...gpuLog].sort((a, b) => a - b)[gpuLog.length >> 1];    // the median of the last five
     const per = ms / costAt(quality);
@@ -2967,10 +2978,10 @@ const oom = await device.popErrorScope(), bad = await device.popErrorScope();
 if (bad || oom){ device.destroy(); throw new Error((bad || oom).message); }
 await device.queue.onSubmittedWorkDone();
 root.classList.add("gl");
-addEventListener("resize", () => { frame(); settle = 3; gpuLog.length = 0; }, { passive: true });
+addEventListener("resize", () => { frame(); settle = 3; gpuLog.length = 0; sceneWake(); }, { passive: true });
 document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !dead;
-  if (running){ lastDraw = -1; nextDraw = 0; settle = 2; gpuLog.length = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  if (running){ sceneWake(); lastDraw = -1; nextDraw = 0; settle = 2; gpuLog.length = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
 // a lost device (a driver reset, the GPU taken away) hands over to the three.js renderer
 device.lost.then(info => { dead = true; if (info.reason !== "destroyed" && window.A4D_FALLBACK) window.A4D_FALLBACK(); });
@@ -2980,28 +2991,97 @@ if (window.A4D_DEBUG_GPU) window.__gpu = { device, textures: () => ({ surf, surf
 
 </script>
 <script>
-/* ================= boot: the renderer =================
-   WebGPU where the browser has it; otherwise, or if it fails at any point, the three.js renderer on a fresh canvas
-   (a canvas keeps the first kind of context it hands out). three.js is fetched only then. ?three in the address
-   asks for the three.js renderer, to compare the two. Nothing starts until the first view is up (A4D_SHOWN). */
+/* ================= boot: the scene, on its own thread =================
+   The three scripts above (typed text/x-lagoon, so the page does not run them) run in a worker that draws on the
+   canvas handed to it (OffscreenCanvas): the scene's work never holds up the page, whose scrolling, taps and panels
+   keep their own thread. The worker sees the page through a small stand-in (the window's size, visibility,
+   A4D_STATE, the html element's classes), kept in step by messages; it sends back the classes it sets and, twice a
+   second, the stats. Where a browser cannot hand a canvas to a worker, or the worker fails before its first frame, or
+   WebGPU exists only on the page, the same scripts run on the page. WebGPU where there is one; otherwise, or if it
+   fails at any point, the three.js renderer on a fresh canvas (a canvas keeps the first kind of context it hands
+   out), with three.js fetched only then. ?three asks for it; ?inline keeps the scene on the page (the tools that
+   capture its shaders use it). Nothing starts until the first view is up (A4D_SHOWN). */
 (function(){
-  const root = document.documentElement;
-  let fell = false;
-  function three(){
-    if (fell) return; fell = true;
-    const old = document.getElementById("sea"), fresh = old.cloneNode(false);
-    old.replaceWith(fresh);
-    const js = document.createElement("script");
-    js.src = "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js";
-    js.onload = () => startGL(); js.onerror = () => root.classList.add("no-gl");
-    document.head.appendChild(js);
+  const root = document.documentElement, S = window.A4D_STATE, q = location.search;
+  const THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js", wantThree = /[?&]three\b/.test(q);
+  const SRC = [...document.querySelectorAll('script[type="text/x-lagoon"]')].map(s => s.textContent).join("\n;\n");
+  const fresh = () => { const old = document.getElementById("sea"), c = old.cloneNode(false); old.replaceWith(c); return c; };
+
+  // on the page: as it always ran
+  function onPage(moved){
+    if (moved) fresh();
+    const js = document.createElement("script"); js.textContent = SRC; document.head.appendChild(js);
+    let fell = false;
+    const three = window.A4D_FALLBACK = () => {
+      if (fell) return; fell = true; fresh();
+      const t = document.createElement("script"); t.src = THREE_URL;
+      t.onload = () => startGL(); t.onerror = () => root.classList.add("no-gl");
+      document.head.appendChild(t);
+    };
+    if (wantThree || !navigator.gpu) return three();
+    startGPU(document.getElementById("sea")).catch(e => { console.warn("lagoon: WebGPU unavailable, drawing with three.js:", e && e.message); three(); });
   }
-  window.A4D_FALLBACK = three;
+
+  // in a worker: the stand-in for the page, the scene, and the messages between them
+  const WORKER = `self.window = self;
+const _cls = new Set(), _on = {}; let _canvas = null;
+self.document = { hidden: false, getElementById: id => id === "sea" ? _canvas : null,
+  addEventListener: (t, f) => (_on[t] = _on[t] || []).push(f),
+  documentElement: { classList: { add: c => { _cls.add(c); postMessage({ cls: c }); }, contains: c => _cls.has(c) } } };
+if (!self.requestAnimationFrame){ let at = 0;
+  self.requestAnimationFrame = f => setTimeout(() => f(at = performance.now()), Math.max(0, 1000 / 60 - (performance.now() - at)));
+  self.cancelAnimationFrame = clearTimeout; }
+${SRC}
+;
+const _three = url => { try { importScripts(url); startGL(); } catch (e) { document.documentElement.classList.add("no-gl"); } };
+onmessage = e => {
+  const m = e.data;
+  if (m.state) Object.assign(self.A4D_STATE || (self.A4D_STATE = {}), m.state);
+  if (m.size){ self.innerWidth = m.size[0]; self.innerHeight = m.size[1]; if (_canvas) dispatchEvent(new Event("resize")); }
+  if ("hidden" in m){ document.hidden = m.hidden; (_on.visibilitychange || []).forEach(f => f()); }
+  if (!m.canvas) return;
+  const first = !_canvas; _canvas = m.canvas;
+  if (!first) return _three(m.three);                     // the fallback, on a fresh canvas
+  self.A4D_BASE = m.base;
+  self.A4D_FALLBACK = () => postMessage({ fallback: true });
+  setInterval(() => A4D_STATE.stats && postMessage({ stats: A4D_STATE.stats, night: A4D_STATE.night }), 500);
+  const gpu = self.navigator.gpu && self.GPUCanvasContext;   // WebGPU, and a canvas it can draw on here
+  if (m.wantThree || (!gpu && !m.gpuOnPage)) return _three(m.three);
+  if (!gpu) return postMessage({ onPage: true });            // WebGPU on the page only: better there than three.js here
+  startGPU(_canvas).catch(err => { console.warn("lagoon: WebGPU unavailable, drawing with three.js:", err && err.message); postMessage({ fallback: true }); });
+};`;
+  function inWorker(){
+    const canvas = document.getElementById("sea");
+    let w, up = false, off;
+    try { off = canvas.transferControlToOffscreen(); w = new Worker(URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }))); }
+    catch (e) { return onPage(!!off); }
+    const quit = () => { if (up) return; up = true; w.terminate(); onPage(true); };   // up: no second hand-over
+    w.onerror = e => { e.preventDefault(); quit(); };
+    w.onmessage = e => {
+      const m = e.data;
+      if (m.cls){ root.classList.add(m.cls); if (m.cls === "gl") up = true; }
+      if (m.stats){ S.stats = m.stats; night = m.night; }
+      if (m.onPage) quit();
+      if (m.fallback){ const c = fresh().transferControlToOffscreen(); w.postMessage({ canvas: c, three: THREE_URL }, [c]); }
+    };
+    // the page's state, kept in step: what the UI writes goes to the worker (night is the scene's, eased there)
+    let night = S.night;
+    Object.defineProperty(S, "night", { get: () => night, set: v => { night = v; w.postMessage({ state: { night: v } }); }, enumerable: true });
+    for (const k of ["open", "targetNight", "pointer"]){
+      let v = S[k];
+      Object.defineProperty(S, k, { get: () => v, set: x => { v = x; w.postMessage({ state: { [k]: x } }); }, enumerable: true });
+    }
+    addEventListener("resize", () => w.postMessage({ size: [innerWidth, innerHeight] }), { passive: true });
+    document.addEventListener("visibilitychange", () => w.postMessage({ hidden: document.hidden }));
+    w.postMessage({ canvas: off, size: [innerWidth, innerHeight], hidden: document.hidden, base: document.baseURI, three: THREE_URL, wantThree,
+      gpuOnPage: !!navigator.gpu, state: { night: S.night, targetNight: S.targetNight, pointer: S.pointer, open: S.open } }, [off]);
+  }
+
   // after the first view is up and the statement has faded in: the text first, then the water
   const settled = new Promise(r => { const st = document.getElementById("statement"); st.addEventListener("transitionend", r, { once: true }); setTimeout(r, 900); });
   window.A4D_SHOWN.then(() => settled).then(() => setTimeout(() => {
-    if (/[?&]three\b/.test(location.search) || !navigator.gpu) return three();
-    startGPU(document.getElementById("sea")).catch(e => { console.warn("lagoon: WebGPU unavailable, drawing with three.js:", e && e.message); three(); });
+    if (/[?&]inline\b/.test(q) || !window.Worker || !HTMLCanvasElement.prototype.transferControlToOffscreen) return onPage(false);
+    inWorker();
   }, 0));
 })();
 </script>
