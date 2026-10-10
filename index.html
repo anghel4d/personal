@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- the raw page (raw/, tools/raw/build.js): the same site in HTML and CSS alone. Without JavaScript the browser goes
+     there; with it, ?raw (or &raw) on any address does. -->
+<noscript><meta http-equiv="refresh" content="0; url=raw/"></noscript>
+<script>if (/[?&]raw(=|&|$)/.test(location.search)) location.replace(new URL("raw/", document.baseURI).href + location.hash)</script>
 <!-- what a shared link shows (title, opening words, picture); tools/meta/build.js writes this block -->
 <!-- meta:begin -->
 <title>Matei Anghel</title>
@@ -381,43 +385,46 @@ let lang = "en", blogTab = "koan";
 function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 function load(k){try{return localStorage.getItem(k)}catch(e){return null}}
 
-// the blog panel: its tabs, and the open tab's posts, each a row that unfolds (nothing until they are loaded)
-function renderBlog(t){
-  const tab = t.tabs.find(x => x.id === blogTab && x.open) || t.tabs.find(x => x.open);
-  document.querySelector("#blog .inner").innerHTML =
-    `<h1 id="blogH">${esc(t.blogH)}</h1><div class="tabs" role="tablist" aria-labelledby="blogH">` +
-    t.tabs.map(x => `<button type="button" role="tab" id="tab-${x.id}" data-tab="${x.id}" aria-controls="tabpanel"` +
-      (x.open ? ` aria-selected="${x === tab}" tabindex="${x === tab ? 0 : -1}"` : ` aria-selected="false" aria-disabled="true" tabindex="-1"`) +
-      `>${esc(x.t)}</button>`).join("") +
-    `</div><div role="tabpanel" id="tabpanel" aria-labelledby="tab-${tab.id}">` +
-    (!POSTS ? "" : POSTS.some(k => k.tab === tab.id)
-      ? POSTS.filter(k => k.tab === tab.id).map(k => `<details class="post${openPosts.has(k.slug) ? " unfolded" : ""}" id="post-${k.slug}" lang="en"${openPosts.has(k.slug) ? " open" : ""}>` +
-          `<summary><h2 id="h-${k.slug}">${A4D_BLOG.inline(k.h)}</h2>` +
-          `<time datetime="${k.date}" lang="${lang}">${new Date(k.date).toLocaleDateString(lang === "fr" ? "fr-FR" : "en-GB",
-            { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</time></summary>` +
-          `<div class="body"><div class="text">${k.html}</div></div></details>`).join("")
-      : `<p class="empty">${esc(t[tab.id + "Empty"] || "")}</p>`) + `</div>`;
-}
+/* views:begin. The panels' markup, as pure functions of the copy (and, for the blog, the posts): the page draws them,
+   and tools/raw/build.js draws the raw page with them, so the two stay one tree. */
+const VIEWS = {
+  work: t => `<h1 id="workH">${esc(t.workH)}</h1><ul class="work">` +
+    t.items.map(it => `<li><h2>${esc(it.h)}${it.jp ? `<span class="jp" lang="ja">${it.jp}</span>` : ""}</h2>
+      <p class="when">${esc(it.when)}</p><p style="margin:0">${esc(it.p)}</p>
+      ${it.tryit ? `<p class="try">${esc(it.tryit)}</p>` : ""}
+      ${it.links.length ? `<div class="links">${it.links.map(l => `<a href="${l[1]}" target="_blank" rel="noopener">${esc(l[0])}</a>`).join("")}</div>` : ""}</li>`).join("") +
+    `</ul><p class="earlier">${esc(t.earlier)}</p>`,
+  about: t => `<h1 id="aboutH">${esc(t.aboutH)}</h1>` + t.aboutP.map(p => `<p>${esc(p)}</p>`).join("") +
+    `<blockquote>${esc(t.stance)}</blockquote><p>${esc(t.noted)}</p>`,
+  contact: t => `<h1 id="contactH">${esc(t.contactH)}</h1><div class="contact"><p>${esc(t.contactLead)}</p>
+     <a class="big" href="mailto:matei3d@gmail.com">matei3d@gmail.com</a><p>${t.contactRest}</p></div>`,
+  // the blog: its tabs, and the open tab's posts, each a row that unfolds (posts: null while they load)
+  blog: (t, lang, tabId, posts, open, inline) => {
+    const tab = t.tabs.find(x => x.id === tabId && x.open) || t.tabs.find(x => x.open);
+    return `<h1 id="blogH">${esc(t.blogH)}</h1><div class="tabs" role="tablist" aria-labelledby="blogH">` +
+      t.tabs.map(x => `<button type="button" role="tab" id="tab-${x.id}" data-tab="${x.id}" aria-controls="tabpanel"` +
+        (x.open ? ` aria-selected="${x === tab}" tabindex="${x === tab ? 0 : -1}"` : ` aria-selected="false" aria-disabled="true" tabindex="-1"`) +
+        `>${esc(x.t)}</button>`).join("") +
+      `</div><div role="tabpanel" id="tabpanel" aria-labelledby="tab-${tab.id}">` +
+      (!posts ? "" : posts.some(k => k.tab === tab.id)
+        ? posts.filter(k => k.tab === tab.id).map(k => `<details class="post${open.has(k.slug) ? " unfolded" : ""}" id="post-${k.slug}" lang="en"${open.has(k.slug) ? " open" : ""}>` +
+            `<summary><h2 id="h-${k.slug}">${inline(k.h)}</h2>` +
+            `<time datetime="${k.date}" lang="${lang}">${new Date(k.date).toLocaleDateString(lang === "fr" ? "fr-FR" : "en-GB",
+              { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</time></summary>` +
+            `<div class="body"><div class="text">${k.html}</div></div></details>`).join("")
+        : `<p class="empty">${esc(t[tab.id + "Empty"] || "")}</p>`) + `</div>`;
+  }
+};
+/* views:end */
+function renderBlog(t){ document.querySelector("#blog .inner").innerHTML = VIEWS.blog(t, lang, blogTab, POSTS, openPosts, s => A4D_BLOG.inline(s)); }
 function render(){
   const t = T[lang];
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-i18n]").forEach(el => { const v = t[el.dataset.i18n]; if (typeof v === "string") el.textContent = v; });
   document.getElementById("statement").innerHTML = t.statement;
   document.querySelectorAll("[data-lang]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
-  document.querySelector("#work .inner").innerHTML =
-    `<h1 id="workH">${esc(t.workH)}</h1><ul class="work">` +
-    t.items.map(it => `<li><h2>${esc(it.h)}${it.jp ? `<span class="jp" lang="ja">${it.jp}</span>` : ""}</h2>
-      <p class="when">${esc(it.when)}</p><p style="margin:0">${esc(it.p)}</p>
-      ${it.tryit ? `<p class="try">${esc(it.tryit)}</p>` : ""}
-      ${it.links.length ? `<div class="links">${it.links.map(l => `<a href="${l[1]}" target="_blank" rel="noopener">${esc(l[0])}</a>`).join("")}</div>` : ""}</li>`).join("") +
-    `</ul><p class="earlier">${esc(t.earlier)}</p>`;
-  document.querySelector("#about .inner").innerHTML =
-    `<h1 id="aboutH">${esc(t.aboutH)}</h1>` + t.aboutP.map(p => `<p>${esc(p)}</p>`).join("") +
-    `<blockquote>${esc(t.stance)}</blockquote><p>${esc(t.noted)}</p>`;
+  for (const v of ["work", "about", "contact"]) document.querySelector(`#${v} .inner`).innerHTML = VIEWS[v](t);
   renderBlog(t);
-  document.querySelector("#contact .inner").innerHTML =
-    `<h1 id="contactH">${esc(t.contactH)}</h1><div class="contact"><p>${esc(t.contactLead)}</p>
-     <a class="big" href="mailto:matei3d@gmail.com">matei3d@gmail.com</a><p>${t.contactRest}</p></div>`;
   document.querySelectorAll("a[data-go]").forEach(a => a.setAttribute("href", addr(a.dataset.go)));
   updateThemeLabel();
   updateMenuLabel();

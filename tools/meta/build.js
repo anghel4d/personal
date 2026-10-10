@@ -9,7 +9,8 @@
 //   - those small pages (and removes the ones for posts that are gone);
 //   - the address map between the routes:begin and routes:end markers, which the page reads to keep its title and
 //     tags in step as it moves between addresses (for previewers that do run the page), and to find the posts' files.
-// Rerun it after adding, changing or removing a post (wrangler.jsonc runs it before each deploy).
+// Rerun it after adding, changing or removing a post (wrangler.jsonc runs it before each deploy). It also writes
+// the raw page (tools/raw/build.js).
 // The picture, assets/card.jpg, is the scene by night with no text, a golden rectangle. Its address carries a hash
 // of the file, so previewers that keep pictures fetch a new one.
 // Rerun it after changing the statement or a panel's opening lines.
@@ -105,6 +106,7 @@ const page = (r, m) => `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${tags(m)}
 <link rel="icon" href="/assets/lion.svg" type="image/svg+xml">
+<noscript><meta http-equiv="refresh" content="0; url=/raw/#${r}"></noscript>
 <script>location.replace("/" + location.search + "#${r}")</script>
 </head>
 <body style="margin:0;background:#E6F0F3;color:#12313D;font:18px Georgia,serif">
@@ -130,3 +132,5 @@ for (const d of fs.existsSync(blogDir) ? fs.readdirSync(blogDir) : []) {
   }
 }
 for (const [r, m] of Object.entries(routes)) console.log(`${(r === "home" ? "/" : "/" + r + "/").padEnd(32)} ${m.title} | ${m.desc}`);
+// and the raw page, from the same copy and posts
+require("../raw/build.js");
