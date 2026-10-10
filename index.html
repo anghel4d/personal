@@ -261,7 +261,7 @@ canvas#sea{opacity:0;transition:opacity 1.6s ease}
 <script>
 
 /* ---------------- copy ---------------- */
-window.A4D_STATE = { night: 0, targetNight: 0, pointer: [0, 0], open: false, dive: 0 };   // dive: the camera tilted down, radians
+window.A4D_STATE = { night: 0, targetNight: 0, pointer: [0, 0], open: false, zoom: 0 };   // zoom: where the camera is headed, 0 to 1
 const S = window.A4D_STATE;
 // the pointer turns the scene's head a little: passed on at most every 33 ms (the scene draws 30 frames a second),
 // the last move always, and not under a panel, where the scene holds still
@@ -464,7 +464,7 @@ function show(id){
   LAYERS.forEach(l => { const el = document.getElementById(l); el.classList.remove("shown"); el.classList.remove("on"); });
   if (typeof pzReset === "function" && !breaking) pzReset();
   current = layer; S.open = layer !== "home"; setMeta(id);
-  if (layer === "home"){ body.classList.remove("open"); menuBtn.setAttribute("aria-expanded","false"); updateMenuLabel(); if (typeof diveHome === "function") diveHome(); return; }
+  if (layer === "home"){ body.classList.remove("open"); menuBtn.setAttribute("aria-expanded","false"); updateMenuLabel(); if (typeof setZoom === "function") setZoom(0); return; }
   body.classList.add("open");
   const el = document.getElementById(layer), at = post && document.getElementById("post-" + post);
   if (at){ fold(at, true, true); openPosts.add(post); }
@@ -524,28 +524,46 @@ let pz = 0, dir = 1, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = 0, touch = null, 
 const layerOf = () => current === "home" ? null : document.getElementById(current), statementEl = document.getElementById("statement");
 const atEdge = (el, d) => !el || (d > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 2 : el.scrollTop <= 1);
 const level = d => dir === d ? pz : 0;                     // a gesture the other way starts from nothing
-/* The dive: on the ocean, scrolling on tilts the camera down toward the water (up to DIVE), and the statement rides
-   up with the horizon it rests on, by the horizon's own shift on the screen (the camera's focal length and pitch, as
-   the scene frames them). Short of the menu both settle back with the gauge; through to the menu the view stays
-   tilted under it, and coming back to the ocean eases it up again (0.45 s). */
-const DIVE = 12 * Math.PI / 180;
-let dive = 0, diveTween = 0, diveByPz = false;
-function setDive(v){
-  dive = v; S.dive = v * DIVE;
+/* The zoom: StarCraft II's camera zoom, on the ocean. SC2's default camera (Core.SC2Mod, CameraData.xml) has five
+   zoom levels, each 4 units closer to the point it looks at and 4 degrees flatter, from distance 34 at a 56-degree
+   pitch to 18 at 40: distance and pitch fall together, in a line. Here the camera orbits the point of water at the
+   middle of the view the same way, its distance and pitch scaled by SC2's (to 18/34 and 40/56 of the first view's),
+   so scrolling on from the ocean brings it down and in toward the water, from 1.25 m to under half a metre, the
+   horizon settling a little lower as the view flattens. Each of the two eases to where the gauge points by a
+   critically damped spring, under SC2's speed caps (distance 80 units a second, pitch 45 degrees, over the table's
+   16 of each). The page only says where to go (A4D_STATE.zoom); the scene and the page each run the same spring
+   (zoomFollow, handed to the worker as text) at their own frame rates, so the camera and the statement both move
+   smoothly. Short of the menu both settle back with the gauge; through to the menu the zoom completes and stays under
+   it; back on the ocean it eases out again. */
+function zoomFollow(z, to, dt){
+  const T = 0.25, step = (x, v, max) => {
+    const w = 2 / T, k = w * dt, e = 1 / (1 + k + 0.48 * k * k + 0.235 * k * k * k), m = max * T;
+    const c = Math.max(-m, Math.min(m, x - to)), t = (v + w * c) * dt;
+    let y = x - c + (c + t) * e; v = (v - w * t) * e;
+    if ((to - x > 0) === (y > to)){ y = to; v = 0; }
+    return [y, v];
+  };
+  [z.d, z.vd] = step(z.d, z.vd, 80 / 16); [z.p, z.vp] = step(z.p, z.vp, 45 / 16);
+  return z;
+}
+const ZM = { d: 0, p: 0, vd: 0, vp: 0 };
+let zoomTo = 0, zoomRaf = 0, zoomAt = 0, zoomByPz = false;
+function setZoom(v){
+  if (v === zoomTo) return;
+  zoomTo = S.zoom = v;
+  if (!zoomRaf){ zoomAt = performance.now(); zoomRaf = requestAnimationFrame(zoomTick); }
+}
+function zoomTick(now){
+  const dt = Math.min(0.1, Math.max(0, now - zoomAt) / 1000); zoomAt = now;
+  zoomFollow(ZM, zoomTo, dt);
+  // the statement rests on the horizon, which sits f * tan(pitch) above the middle of the screen
   const f = Math.max(406 / Math.tan(Math.PI / 6), Math.max(innerWidth, innerHeight) / 2 / Math.tan(50 * Math.PI / 180));
-  const b = Math.atan((1 - 2 * 0.38) * innerHeight / 2 / f);           // the scene's own pitch, HORIZON 0.38
-  statementEl.style.translate = v > 0 ? `0 ${(-f * (Math.tan(b + v * DIVE) - Math.tan(b))).toFixed(1)}px` : "";
-  // over the last part of the dive it fades, before it can reach the corner controls; this frame's value, no transition
-  const x = Math.min(1, Math.max(0, (v - 0.55) / 0.45));
-  statementEl.style.transition = v > 0 ? "none" : ""; statementEl.style.opacity = v > 0 ? String(1 - x * x * (3 - 2 * x)) : "";
+  const b = Math.atan((1 - 2 * 0.38) * innerHeight / 2 / f), q = (56 - 16 * ZM.p) / 56;   // the scene's own pitch (HORIZON 0.38)
+  const y = f * (Math.tan(b) - Math.tan(b * q));
+  statementEl.style.translate = y > 0.05 ? `0 ${y.toFixed(2)}px` : "";
+  const rest = Math.abs(ZM.d - zoomTo) < 1e-4 && Math.abs(ZM.p - zoomTo) < 1e-4;
+  zoomRaf = rest ? 0 : requestAnimationFrame(zoomTick);
 }
-function diveTo(v1){
-  if (dive === v1) return;
-  const v0 = dive, t0 = performance.now(); cancelAnimationFrame(diveTween);
-  const step = now => { const k = Math.min(1, (now - t0) / 450); setDive(v1 + (v0 - v1) * (1 - k) ** 3); if (k < 1) diveTween = requestAnimationFrame(step); };
-  diveTween = requestAnimationFrame(step);
-}
-const diveHome = () => diveTo(0);
 let pzLabel = "";
 function pzDraw(){
   const el = layerOf(), label = pz > 0 ? T[lang][dir > 0 ? "next" : "prev"] + " · " + T[lang][besideOf(dir)] : pzLabel;
@@ -555,7 +573,7 @@ function pzDraw(){
   poiseFill.style.transform = `scaleX(${pz})`;
   const lean = pz > 0 ? `${(-16 * dir * pz).toFixed(2)}px` : "";
   if (el){ el.classList.toggle("poised", pz > 0); el.firstElementChild.style.transform = lean && `translateY(${lean})`; }
-  else if (pz > 0 || diveByPz){ cancelAnimationFrame(diveTween); setDive(pz); diveByPz = pz > 0; }   // on the ocean, the dive
+  else if (pz > 0 || zoomByPz){ setZoom(pz); zoomByPz = pz > 0; }   // on the ocean, the zoom
 }
 function pzTick(now){
   pzRaf = 0;
@@ -582,7 +600,7 @@ function pzBreak(){
     from.classList.add(back ? "sink" : "leave", "gone");
     setTimeout(() => { from.classList.remove("leave", "sink", "gone", "poised"); from.firstElementChild.style.transform = ""; }, 160);
   }
-  if (diveByPz || current === "home"){ diveByPz = false; diveTo(1); }   // through to the menu: the tilt completes, and stays
+  if (zoomByPz || current === "home"){ zoomByPz = false; setZoom(1); }   // through to the menu: the zoom completes, and stays
   if (next){ next.classList.add(back ? "drop" : "rise"); setTimeout(() => next.classList.remove("rise", "drop"), 300); }
   go(to);
   if (next && back) next.scrollTop = next.scrollHeight;      // going back lands at the end of the one before
@@ -1865,7 +1883,7 @@ document.addEventListener("visibilitychange", () => {
   running = !document.hidden && !root.classList.contains("no-gl");
   if (running){ lastDraw = -1; nextDraw = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
 });
-const yaw = { v: 0 }, pitch = { v: 0 };
+const yaw = { v: 0 }, pitch = { v: 0 }, ZOOM = { d: 0, p: 0, vd: 0, vp: 0 };   // ZOOM: the camera on its way, see zoomFollow
 function tick(now){
   if (!running) return;
   raf = requestAnimationFrame(tick);
@@ -1895,8 +1913,10 @@ function tick(now){
   // the pointer turns the head a little; a slow handheld drift keeps the frame alive
   yaw.v += ((-S.pointer[0]) * 0.035 - yaw.v) * Math.min(1, dt * 1.1);
   pitch.v += ((-S.pointer[1]) * 0.012 - pitch.v) * Math.min(1, dt * 1.1);
-  camera.position.set(0.03 * Math.sin(t * 0.21), EYE + 0.015 * Math.sin(t * 0.57), 0.03 * Math.cos(t * 0.17));
-  camera.rotation.set(basePitch - S.dive + pitch.v + 0.004 * Math.sin(t * 0.47 + 2.0) + 0.002 * Math.sin(t * 1.13),
+  const zm = zoomFollow(ZOOM, S.zoom || 0, dt), zb = -basePitch, zD0 = EYE / Math.sin(zb), zD = zD0 * (34 - 16 * zm.d) / 34, zp = zb * (56 - 16 * zm.p) / 56;
+  const zY = zD * Math.sin(zp), zZ = zD * Math.cos(zp) - zD0 * Math.cos(zb);     // SC2's zoom: down and in, about the same point of water
+  camera.position.set(0.03 * Math.sin(t * 0.21), zY + 0.015 * Math.sin(t * 0.57), zZ + 0.03 * Math.cos(t * 0.17));
+  camera.rotation.set(-zp + pitch.v + 0.004 * Math.sin(t * 0.47 + 2.0) + 0.002 * Math.sin(t * 1.13),
                       yaw.v + 0.010 * Math.sin(t * 0.31) + 0.005 * Math.sin(t * 0.83 + 1.3), 0.004 * Math.sin(t * 0.39 + 0.4), "YXZ");
   camera.updateMatrixWorld();
   camRot.setFromMatrix4(camera.matrixWorld);
@@ -3064,7 +3084,7 @@ const gpuLog = [];
 // scale) + q^2, with FIXED_PX the fixed part's cost in full-scale pixels (about 130,000 by the shader-cost estimates)
 const FIXED_PX = 130000, costAt = q => FIXED_PX / (innerWidth * innerHeight * PX_PER_CSS * PX_PER_CSS) + q * q;
 function rescale(q){ quality = q; frame(); settle = 3; gpuLog.length = 0; lateN = underN = 0; }
-const yaw = { v: 0 }, pitch = { v: 0 };
+const yaw = { v: 0 }, pitch = { v: 0 }, ZOOM = { d: 0, p: 0, vd: 0, vp: 0 };   // ZOOM: the camera on its way, see zoomFollow
 function render(now){
   // the clock follows real elapsed time, so the water moves at the same pace at any frame rate
   if (lastDraw < 0) lastDraw = now - FRAME_MS;
@@ -3078,8 +3098,10 @@ function render(now){
   // the pointer turns the head a little; a slow handheld drift keeps the frame alive
   yaw.v += ((-S.pointer[0]) * 0.035 - yaw.v) * Math.min(1, dt * 1.1);
   pitch.v += ((-S.pointer[1]) * 0.012 - pitch.v) * Math.min(1, dt * 1.1);
-  const cam = [0.03 * Math.sin(t * 0.21), EYE + 0.015 * Math.sin(t * 0.57), 0.03 * Math.cos(t * 0.17)];
-  const mw = camMath.matrixWorld(cam, basePitch - S.dive + pitch.v + 0.004 * Math.sin(t * 0.47 + 2.0) + 0.002 * Math.sin(t * 1.13),
+  const zm = zoomFollow(ZOOM, S.zoom || 0, dt), zb = -basePitch, zD0 = EYE / Math.sin(zb), zD = zD0 * (34 - 16 * zm.d) / 34, zp = zb * (56 - 16 * zm.p) / 56;
+  const zY = zD * Math.sin(zp), zZ = zD * Math.cos(zp) - zD0 * Math.cos(zb);     // SC2's zoom: down and in, about the same point of water
+  const cam = [0.03 * Math.sin(t * 0.21), zY + 0.015 * Math.sin(t * 0.57), zZ + 0.03 * Math.cos(t * 0.17)];
+  const mw = camMath.matrixWorld(cam, -zp + pitch.v + 0.004 * Math.sin(t * 0.47 + 2.0) + 0.002 * Math.sin(t * 1.13),
     yaw.v + 0.010 * Math.sin(t * 0.31) + 0.005 * Math.sin(t * 0.83 + 1.3), 0.004 * Math.sin(t * 0.39 + 0.4));
   // the sky map: refreshed twice a second, a quarter at a time over four frames so that no frame carries it all; in
   // full, every frame, while the theme changes
@@ -3178,6 +3200,7 @@ const _cls = new Set(), _on = {}; let _canvas = null;
 self.document = { hidden: false, getElementById: id => id === "sea" ? _canvas : null,
   addEventListener: (t, f) => (_on[t] = _on[t] || []).push(f),
   documentElement: { classList: { add: c => { _cls.add(c); postMessage({ cls: c }); }, contains: c => _cls.has(c) } } };
+${zoomFollow.toString()}
 if (!self.requestAnimationFrame){ let at = 0;
   self.requestAnimationFrame = f => setTimeout(() => f(at = performance.now()), Math.max(0, 1000 / 60 - (performance.now() - at)));
   self.cancelAnimationFrame = clearTimeout; }
@@ -3217,14 +3240,14 @@ onmessage = e => {
     // the page's state, kept in step: what the UI writes goes to the worker (night is the scene's, eased there)
     let night = S.night;
     Object.defineProperty(S, "night", { get: () => night, set: v => { night = v; w.postMessage({ state: { night: v } }); }, enumerable: true });
-    for (const k of ["open", "targetNight", "pointer", "dive"]){
+    for (const k of ["open", "targetNight", "pointer", "zoom"]){
       let v = S[k];
       Object.defineProperty(S, k, { get: () => v, set: x => { v = x; w.postMessage({ state: { [k]: x } }); }, enumerable: true });
     }
     addEventListener("resize", () => w.postMessage({ size: [innerWidth, innerHeight] }), { passive: true });
     document.addEventListener("visibilitychange", () => w.postMessage({ hidden: document.hidden }));
     w.postMessage({ canvas: off, size: [innerWidth, innerHeight], hidden: document.hidden, base: document.baseURI, three: THREE_URL, wantThree,
-      gpuOnPage: !!navigator.gpu, state: { night: S.night, targetNight: S.targetNight, pointer: S.pointer, open: S.open, dive: S.dive } }, [off]);
+      gpuOnPage: !!navigator.gpu, state: { night: S.night, targetNight: S.targetNight, pointer: S.pointer, open: S.open, zoom: S.zoom } }, [off]);
   }
 
   // after the first view is up and the statement has faded in: the text first, then the water
