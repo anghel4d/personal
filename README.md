@@ -6,6 +6,6 @@ The water follows [CAUSTIC//VOLUME](https://github.com/ScottieFox/caustic-volume
 
 The type is Newsreader (Production Type) and JetBrains Mono (JetBrains), both under the SIL Open Font License (`licenses/`), self-hosted and subset.
 
-Without JavaScript, or with `?raw` on any address, the site is `raw/`: the same pages in HTML and CSS alone, with a still picture of the lagoon in gradients (`node tools/raw/build.js`, run by `tools/meta/build.js`). Blog posts are files in `blog/posts/`, one element each (`<koan date="…">` and the Markdown); `blog/blog.js` renders them. Shared links unfurl with a title, opening words and a picture of the lagoon by night: every address (`/work/`, `/blog/<post>/` and so on) has a small page of its own for link previews, written by `node tools/meta/build.js` from the site's copy and posts.
+Without JavaScript, or with `?raw` on any address, the site is `raw/`: the same pages in HTML and CSS alone, minimal: flat colour, nothing drawn, nothing moving (`node tools/raw/build.js`, run by `tools/meta/build.js`). Blog posts are files in `blog/posts/`, one element each (`<koan date="…">` and the Markdown); `blog/blog.js` renders them. Shared links unfurl with a title, opening words and a picture of the lagoon by night: every address (`/work/`, `/blog/<post>/` and so on) has a small page of its own for link previews, written by `node tools/meta/build.js` from the site's copy and posts.
 
 Open `index.html` through any static server (`python3 -m http.server`) to preview it. See `CLAUDE.md` for how it is built.

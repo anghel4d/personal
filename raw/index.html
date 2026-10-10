@@ -197,15 +197,19 @@ body,.chrome,.statement{transition:color 1.2s ease}
 <style>
 /* ---------------- the raw page's own styles (tools/raw/build.js puts them after the page's) ---------------- */
 
-/* the theme: the system's setting, turned the other way by the checkbox (#flip). --n is 1 by night. */
-:root{--sky:#E6F0F3;--haze:#F2F7F8;--ink:#12313D;--ink-soft:rgba(18,49,61,.62);--rule:rgba(18,49,61,.22);--veil:rgba(236,245,247,.58);--focus:#0D5470;--scene:linear-gradient(180deg,#6FB8DE 0%,#7CC0E2 30%,#B6D3E2 37%,#AEC7D7 38%,#9FC0D6 38.3%,#6FA5CA 46%,#3B9EC7 65%,#22AFC3 100%);--n:0;--mode-en:"day";--mode-fr:"jour";}
+/* the theme: the system's setting, turned the other way by the checkbox (#flip) */
+:root{--sky:#E6F0F3;--haze:#F2F7F8;--ink:#12313D;--ink-soft:rgba(18,49,61,.62);--rule:rgba(18,49,61,.22);--veil:rgba(236,245,247,.58);--focus:#0D5470;--scene:linear-gradient(180deg,#6FB8DE 0%,#7CC0E2 30%,#B6D3E2 37%,#AEC7D7 38%,#9FC0D6 38.3%,#6FA5CA 46%,#3B9EC7 65%,#22AFC3 100%);--mode-en:"day";--mode-fr:"jour";}
 @media (prefers-color-scheme:dark){
-  :root{--n:1;--mode-en:"night";--mode-fr:"nuit"}       /* without :has, the system's setting alone */
-  :root:not(:has(#flip:checked)){--sky:#071824;--haze:#0B2230;--ink:#D7ECF2;--ink-soft:rgba(215,236,242,.62);--rule:rgba(215,236,242,.22);--veil:rgba(4,19,29,.55);--focus:#8FD7E4;--scene:linear-gradient(180deg,#071F4A 0%,#0A2A5C 30%,#12395F 37%,#0A3562 38%,#073662 38.3%,#01224C 46%,#00113D 70%,#000F31 100%);--n:1;--mode-en:"night";--mode-fr:"nuit";}
-  :root:has(#flip:checked){--sky:#E6F0F3;--haze:#F2F7F8;--ink:#12313D;--ink-soft:rgba(18,49,61,.62);--rule:rgba(18,49,61,.22);--veil:rgba(236,245,247,.58);--focus:#0D5470;--scene:linear-gradient(180deg,#6FB8DE 0%,#7CC0E2 30%,#B6D3E2 37%,#AEC7D7 38%,#9FC0D6 38.3%,#6FA5CA 46%,#3B9EC7 65%,#22AFC3 100%);--n:0;--mode-en:"day";--mode-fr:"jour";}
+  :root{--mode-en:"night";--mode-fr:"nuit"}       /* without :has, the system's setting alone */
+  :root:not(:has(#flip:checked)){--sky:#071824;--haze:#0B2230;--ink:#D7ECF2;--ink-soft:rgba(215,236,242,.62);--rule:rgba(215,236,242,.22);--veil:rgba(4,19,29,.55);--focus:#8FD7E4;--scene:linear-gradient(180deg,#071F4A 0%,#0A2A5C 30%,#12395F 37%,#0A3562 38%,#073662 38.3%,#01224C 46%,#00113D 70%,#000F31 100%);--mode-en:"night";--mode-fr:"nuit";}
+  :root:has(#flip:checked){--sky:#E6F0F3;--haze:#F2F7F8;--ink:#12313D;--ink-soft:rgba(18,49,61,.62);--rule:rgba(18,49,61,.22);--veil:rgba(236,245,247,.58);--focus:#0D5470;--scene:linear-gradient(180deg,#6FB8DE 0%,#7CC0E2 30%,#B6D3E2 37%,#AEC7D7 38%,#9FC0D6 38.3%,#6FA5CA 46%,#3B9EC7 65%,#22AFC3 100%);--mode-en:"day";--mode-fr:"jour";}
 }
-@media not (prefers-color-scheme:dark){ :root:has(#flip:checked){--sky:#071824;--haze:#0B2230;--ink:#D7ECF2;--ink-soft:rgba(215,236,242,.62);--rule:rgba(215,236,242,.22);--veil:rgba(4,19,29,.55);--focus:#8FD7E4;--scene:linear-gradient(180deg,#071F4A 0%,#0A2A5C 30%,#12395F 37%,#0A3562 38%,#073662 38.3%,#01224C 46%,#00113D 70%,#000F31 100%);--n:1;--mode-en:"night";--mode-fr:"nuit";} }
-body{background:var(--scene)}
+@media not (prefers-color-scheme:dark){ :root:has(#flip:checked){--sky:#071824;--haze:#0B2230;--ink:#D7ECF2;--ink-soft:rgba(215,236,242,.62);--rule:rgba(215,236,242,.22);--veil:rgba(4,19,29,.55);--focus:#8FD7E4;--scene:linear-gradient(180deg,#071F4A 0%,#0A2A5C 30%,#12395F 37%,#0A3562 38%,#073662 38.3%,#01224C 46%,#00113D 70%,#000F31 100%);--mode-en:"night";--mode-fr:"nuit";} }
+/* minimal: the palette's flat ground, nothing drawn, nothing moving, nothing blurred */
+html,body{background:var(--sky)}
+*,*::before,*::after{transition:none !important;animation:none !important}
+.statement{filter:none !important;text-shadow:none}
+.veil{background:var(--sky);-webkit-backdrop-filter:none;backdrop-filter:none}
 #themeBtn .mode::after{content:var(--mode-en)}
 #themeBtn .l-fr.mode::after{content:var(--mode-fr)}
 
@@ -225,7 +229,7 @@ body{background:var(--scene)}
 .go-home{display:none !important}
 body:has(.layer:target,.layer :target) .go-menu{display:none !important}
 body:has(.layer:target,.layer :target) .go-home{display:inline-flex !important}
-.pz-home{text-decoration:none;left:50%;bottom:calc(var(--pad) + env(safe-area-inset-bottom,0px));translate:-50% 0;color:var(--ink-soft);text-transform:lowercase;transition:opacity .5s ease}
+.pz-home{text-decoration:none;left:50%;bottom:calc(var(--pad) + env(safe-area-inset-bottom,0px));translate:-50% 0;color:var(--ink-soft);text-transform:lowercase}
 body:has(.layer:target,.layer :target) .pz-home{opacity:0;pointer-events:none}
 .pz{display:flex;justify-content:space-between;gap:16px;margin:3.2em 0 0;font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;text-transform:lowercase}
 .pz a{color:var(--ink-soft);text-decoration:none;padding:10px 0;margin:-10px 0}
@@ -239,60 +243,9 @@ body:has(.layer:target,.layer :target) .pz-home{opacity:0;pointer-events:none}
 /* the anchor sits a row above the text, so the post's title shows when its address opens it */
 .anchor{display:block;position:relative;top:calc(-1 * (var(--pad) + 9em));height:0}
 
-/* ---------------- the picture: the lagoon, still, in gradients ----------------
-   The horizon sits 38% down, as the scene's does. By day: the sky paling to a haze band, a bank of cumulus on the
-   horizon, and the sun's path on the water below the top of the frame. By night: stars, the moon (its photograph)
-   up and to the left, and its path. Day and night cross-fade on --n. */
-.art{position:fixed;inset:0;z-index:0;overflow:hidden;background:var(--scene);transition:background 1.2s ease}
-.art i{position:absolute;display:block;transition:opacity 1.2s ease}
-.art .haze{left:0;right:0;top:calc(38% - 9vh);height:12vh;
-  background:linear-gradient(180deg,transparent,rgba(232,244,248,calc(.5 - .42 * var(--n))) 72%,rgba(232,244,248,calc(.22 - .2 * var(--n))) 76%,transparent)}
-.art .stars{left:0;right:0;top:0;height:36%;opacity:calc(var(--n) * .9);
-  background:
-    radial-gradient(1px 1px at 13% 22%,#fff 50%,transparent),radial-gradient(1px 1px at 71% 9%,#fff 50%,transparent),
-    radial-gradient(1.5px 1.5px at 44% 61%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 88% 41%,#e4ecff 50%,transparent),radial-gradient(1px 1px at 27% 83%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 59% 32%,#cfe0ff 50%,transparent),radial-gradient(1.5px 1.5px at 8% 68%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 37% 12%,#fff 50%,transparent),radial-gradient(1px 1px at 79% 77%,#fff 50%,transparent);
-  background-size:317px 233px,317px 233px,317px 233px,421px 197px,421px 197px,421px 197px,563px 281px,563px 281px,563px 281px;
-  -webkit-mask-image:linear-gradient(180deg,#000 40%,transparent);mask-image:linear-gradient(180deg,#000 40%,transparent)}
-.art .wisps{left:-10%;right:-10%;top:4%;height:26%;opacity:calc(.55 - .3 * var(--n));filter:blur(6px);
-  background:
-    radial-gradient(28% 9% at 22% 30%,rgba(255,255,255,.55),transparent 70%),
-    radial-gradient(34% 7% at 64% 18%,rgba(255,255,255,.45),transparent 70%),
-    radial-gradient(22% 6% at 82% 58%,rgba(255,255,255,.4),transparent 70%),
-    radial-gradient(30% 8% at 46% 72%,rgba(255,255,255,.35),transparent 70%)}
-.art .sun{left:50%;top:-30vh;width:90vh;height:60vh;translate:-50% 0;opacity:calc(1 - var(--n));
-  background:radial-gradient(closest-side,rgba(255,250,235,.55),rgba(255,250,235,.12) 55%,transparent)}
-.art .moon{left:calc(28% - 4vh);top:calc(38% - 25vh);width:8vh;height:8vh;border-radius:50%;opacity:var(--n);
-  background:#cdd7e6 url(../assets/moon.webp) center/cover;
-  box-shadow:0 0 3vh 1vh rgba(190,214,255,.22),0 0 12vh 4vh rgba(150,185,255,.12)}
-.art .bank{left:-4%;right:-4%;top:calc(38% - 8.5vh);height:8.6vh;filter:blur(1.2px);
-  opacity:calc(.95 - .55 * var(--n));
-  background:
-    radial-gradient(9% 70% at 10% 100%,rgba(255,255,255,.95),rgba(255,255,255,.6) 45%,transparent 72%),
-    radial-gradient(7% 46% at 19% 100%,rgba(255,255,255,.85),transparent 70%),
-    radial-gradient(13% 98% at 47% 100%,rgba(255,255,255,.97),rgba(246,250,252,.7) 45%,transparent 72%),
-    radial-gradient(8% 60% at 58% 100%,rgba(255,255,255,.85),transparent 70%),
-    radial-gradient(10% 74% at 83% 100%,rgba(255,255,255,.92),rgba(255,255,255,.55) 45%,transparent 72%),
-    radial-gradient(7% 40% at 93% 100%,rgba(255,255,255,.8),transparent 70%),
-    linear-gradient(180deg,transparent 70%,rgba(176,196,214,.75))}
-/* a path of light on the water: a soft column of glow with faint lines in it, closer together toward the horizon
-   (a plane in perspective) and narrowing into it */
-.art .sunpath,.art .moonpath{top:38%;bottom:0;width:min(40vw,420px);translate:-50% 0;filter:blur(.5px);
-  background:repeating-linear-gradient(180deg,rgba(255,255,255,.5) 0 1px,transparent 1px 6px),
-    linear-gradient(90deg,transparent,rgba(255,255,255,.28) 35%,rgba(255,255,255,.38) 50%,rgba(255,255,255,.28) 65%,transparent);
-  transform:perspective(30vh) rotateX(38deg);transform-origin:50% 0;
-  -webkit-mask-image:radial-gradient(44% 115% at 50% 0,#000 5%,rgba(0,0,0,.35) 50%,transparent 85%);
-  mask-image:radial-gradient(44% 115% at 50% 0,#000 5%,rgba(0,0,0,.35) 50%,transparent 85%)}
-.art .sunpath{left:50%;opacity:calc((1 - var(--n)) * .8)}
-.art .moonpath{left:28%;width:min(24vw,260px);opacity:calc(var(--n) * .85)}
-
 </style>
 </head>
 <body class="ready">
-<div class="art" aria-hidden="true"><i class="haze"></i><i class="stars"></i><i class="wisps"></i><i class="sun"></i><i class="moon"></i><i class="bank"></i><i class="sunpath"></i><i class="moonpath"></i></div>
-
 <a class="chrome tl" href="#" data-go="home" aria-label="Matei Anghel, home">
   <svg class="mark" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"> <defs><mask id="LCm" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64"><rect width="64" height="64" fill="#fff"/><path d="M32.00 18.20 C34.07 18.20 36.37 17.94 38.22 18.43 C40.07 18.91 41.99 19.91 43.10 21.09 C44.21 22.27 44.51 23.98 44.88 25.53 C45.25 27.08 45.39 28.71 45.32 30.41 C45.25 32.12 44.99 34.04 44.43 35.74 C43.88 37.44 42.99 39.07 41.99 40.63 C40.99 42.18 39.58 43.77 38.44 45.07 C37.29 46.36 36.18 47.66 35.11 48.40 C34.03 49.14 33.04 49.51 32.00 49.51 C30.96 49.51 29.96 49.14 28.89 48.40 C27.82 47.66 26.71 46.36 25.56 45.07 C24.41 43.77 23.01 42.18 22.01 40.63 C21.01 39.07 20.12 37.44 19.57 35.74 C19.01 34.04 18.75 32.12 18.68 30.41 C18.61 28.71 18.75 27.08 19.12 25.53 C19.49 23.98 19.79 22.27 20.90 21.09 C22.01 19.91 23.93 18.91 25.78 18.43 C27.63 17.94 29.93 18.20 32.00 18.20 Z" fill="#000"/></mask> <mask id="LCf" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64"><rect width="64" height="64" fill="#fff"/> <path d="M24.8 30.0 Q27.6 28.5 30.0 30.6 Q27.3 31.6 24.8 30.0 Z M39.2 30.0 Q36.4 28.5 34.0 30.6 Q36.7 31.6 39.2 30.0 Z" fill="#000"/><path d="M23.8 27.4 Q27.0 25.6 30.4 28.0 M40.2 27.4 Q37.0 25.6 33.6 28.0 M32 39.8 V42.0 M32 42.0 Q29.8 44.6 26.8 43.2 M32 42.0 Q34.2 44.6 37.2 43.2 M26.8 43.2 Q25.2 41.4 26.2 38.8 M37.2 43.2 Q38.8 41.4 37.8 38.8 M32 21.8 V25.8" fill="none" stroke="#000" stroke-width="1.35" stroke-linecap="round"/> <path d="M28.4 35.6 Q32 34.6 35.6 35.6 Q34.6 38.4 32 39.8 Q29.4 38.4 28.4 35.6 Z" fill="none" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></mask></defs> <g mask="url(#LCm)"><path d="M29.36 18.23 Q33.76 9.86 38.06 3.11 Q36.66 11.20 34.64 18.23 Z M33.62 18.09 Q39.39 13.44 44.14 10.01 Q41.56 15.33 38.70 19.58 Z M37.76 19.15 Q45.28 15.42 51.66 12.78 Q46.91 17.98 42.21 22.01 Z M41.43 21.33 Q50.64 19.17 58.56 18.00 Q51.53 22.24 44.89 25.33 Z M44.33 24.46 Q51.62 25.78 57.32 27.11 Q51.61 28.66 46.53 29.27 Z M46.24 28.28 Q53.98 31.52 60.15 34.61 Q53.12 34.43 46.99 33.51 Z M46.99 32.49 Q54.65 38.03 60.73 43.25 Q52.92 40.71 46.24 37.72 Z M46.53 36.73 Q50.31 43.10 53.03 48.28 Q48.13 44.98 44.33 41.54 Z M44.89 40.67 Q47.51 48.65 49.22 55.33 Q44.75 49.90 41.43 44.67 Z M42.21 43.99 Q43.03 53.41 43.06 61.42 Q39.87 53.86 37.76 46.85 Z M38.70 46.42 Q36.36 53.45 34.22 58.90 Q33.51 53.03 33.62 47.91 Z M34.64 47.77 Q30.33 54.97 26.40 60.64 Q27.58 53.70 29.36 47.77 Z M30.38 47.91 Q23.80 54.71 17.76 59.97 Q21.39 52.61 25.30 46.42 Z M26.24 46.85 Q19.40 49.68 13.88 51.64 Q17.85 47.26 21.79 43.99 Z M22.57 44.67 Q14.31 46.13 7.44 46.86 Q13.46 43.21 19.11 40.67 Z M19.67 41.54 Q10.22 41.02 2.29 39.91 Q10.23 37.82 17.47 36.73 Z M17.76 37.72 Q11.14 34.40 6.04 31.51 Q11.96 31.64 17.01 32.49 Z M17.01 33.51 Q10.49 28.22 5.44 23.52 Q12.14 25.68 17.76 28.28 Z M17.47 29.27 Q11.68 21.79 7.33 15.07 Q14.10 19.71 19.67 24.46 Z M19.11 25.33 Q17.28 18.15 16.12 12.41 Q19.90 16.96 22.57 21.33 Z M21.79 22.01 Q21.53 13.62 21.77 6.72 Q24.53 13.19 26.24 19.15 Z M25.30 19.58 Q27.17 10.30 29.39 2.61 Q30.33 10.77 30.38 18.09 Z M32.00 15.45 C34.46 15.45 37.19 15.14 39.39 15.71 C41.59 16.28 43.88 17.47 45.20 18.88 C46.52 20.29 46.87 22.31 47.31 24.16 C47.75 26.01 47.93 27.94 47.84 29.97 C47.75 31.99 47.44 34.28 46.78 36.30 C46.12 38.33 45.07 40.26 43.88 42.11 C42.69 43.96 41.02 45.85 39.66 47.39 C38.29 48.93 36.97 50.47 35.70 51.35 C34.42 52.23 33.23 52.67 32.00 52.67 C30.77 52.67 29.58 52.23 28.30 51.35 C27.03 50.47 25.71 48.93 24.34 47.39 C22.98 45.85 21.31 43.96 20.12 42.11 C18.93 40.26 17.88 38.33 17.22 36.30 C16.56 34.28 16.25 31.99 16.16 29.97 C16.07 27.94 16.25 26.01 16.69 24.16 C17.13 22.31 17.48 20.29 18.80 18.88 C20.12 17.47 22.41 16.28 24.61 15.71 C26.81 15.14 29.54 15.45 32.00 15.45 Z"/></g> <g mask="url(#LCf)"><path d="M32.00 19.40 C33.87 19.40 35.93 19.17 37.60 19.60 C39.27 20.03 41.00 20.93 42.00 22.00 C43.00 23.07 43.27 24.60 43.60 26.00 C43.93 27.40 44.07 28.87 44.00 30.40 C43.93 31.93 43.70 33.67 43.20 35.20 C42.70 36.73 41.90 38.20 41.00 39.60 C40.10 41.00 38.83 42.43 37.80 43.60 C36.77 44.77 35.77 45.93 34.80 46.60 C33.83 47.27 32.93 47.60 32.00 47.60 C31.07 47.60 30.17 47.27 29.20 46.60 C28.23 45.93 27.23 44.77 26.20 43.60 C25.17 42.43 23.90 41.00 23.00 39.60 C22.10 38.20 21.30 36.73 20.80 35.20 C20.30 33.67 20.07 31.93 20.00 30.40 C19.93 28.87 20.07 27.40 20.40 26.00 C20.73 24.60 21.00 23.07 22.00 22.00 C23.00 20.93 24.73 20.03 26.40 19.60 C28.07 19.17 30.13 19.40 32.00 19.40 Z"/></g> </svg>
 </a>

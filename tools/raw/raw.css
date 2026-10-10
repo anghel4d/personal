@@ -1,14 +1,18 @@
 /* ---------------- the raw page's own styles (tools/raw/build.js puts them after the page's) ---------------- */
 
-/* the theme: the system's setting, turned the other way by the checkbox (#flip). --n is 1 by night. */
+/* the theme: the system's setting, turned the other way by the checkbox (#flip) */
 :root{/* DAY */}
 @media (prefers-color-scheme:dark){
-  :root{--n:1;--mode-en:"night";--mode-fr:"nuit"}       /* without :has, the system's setting alone */
+  :root{--mode-en:"night";--mode-fr:"nuit"}       /* without :has, the system's setting alone */
   :root:not(:has(#flip:checked)){/* NIGHT */}
   :root:has(#flip:checked){/* DAY */}
 }
 @media not (prefers-color-scheme:dark){ :root:has(#flip:checked){/* NIGHT */} }
-body{background:var(--scene)}
+/* minimal: the palette's flat ground, nothing drawn, nothing moving, nothing blurred */
+html,body{background:var(--sky)}
+*,*::before,*::after{transition:none !important;animation:none !important}
+.statement{filter:none !important;text-shadow:none}
+.veil{background:var(--sky);-webkit-backdrop-filter:none;backdrop-filter:none}
 #themeBtn .mode::after{content:var(--mode-en)}
 #themeBtn .l-fr.mode::after{content:var(--mode-fr)}
 
@@ -28,7 +32,7 @@ body{background:var(--scene)}
 .go-home{display:none !important}
 body:has(.layer:target,.layer :target) .go-menu{display:none !important}
 body:has(.layer:target,.layer :target) .go-home{display:inline-flex !important}
-.pz-home{text-decoration:none;left:50%;bottom:calc(var(--pad) + env(safe-area-inset-bottom,0px));translate:-50% 0;color:var(--ink-soft);text-transform:lowercase;transition:opacity .5s ease}
+.pz-home{text-decoration:none;left:50%;bottom:calc(var(--pad) + env(safe-area-inset-bottom,0px));translate:-50% 0;color:var(--ink-soft);text-transform:lowercase}
 body:has(.layer:target,.layer :target) .pz-home{opacity:0;pointer-events:none}
 .pz{display:flex;justify-content:space-between;gap:16px;margin:3.2em 0 0;font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;text-transform:lowercase}
 .pz a{color:var(--ink-soft);text-decoration:none;padding:10px 0;margin:-10px 0}
@@ -41,52 +45,3 @@ body:has(.layer:target,.layer :target) .pz-home{opacity:0;pointer-events:none}
 .panel .post[open] summary::before{content:"\2212"}
 /* the anchor sits a row above the text, so the post's title shows when its address opens it */
 .anchor{display:block;position:relative;top:calc(-1 * (var(--pad) + 9em));height:0}
-
-/* ---------------- the picture: the lagoon, still, in gradients ----------------
-   The horizon sits 38% down, as the scene's does. By day: the sky paling to a haze band, a bank of cumulus on the
-   horizon, and the sun's path on the water below the top of the frame. By night: stars, the moon (its photograph)
-   up and to the left, and its path. Day and night cross-fade on --n. */
-.art{position:fixed;inset:0;z-index:0;overflow:hidden;background:var(--scene);transition:background 1.2s ease}
-.art i{position:absolute;display:block;transition:opacity 1.2s ease}
-.art .haze{left:0;right:0;top:calc(38% - 9vh);height:12vh;
-  background:linear-gradient(180deg,transparent,rgba(232,244,248,calc(.5 - .42 * var(--n))) 72%,rgba(232,244,248,calc(.22 - .2 * var(--n))) 76%,transparent)}
-.art .stars{left:0;right:0;top:0;height:36%;opacity:calc(var(--n) * .9);
-  background:
-    radial-gradient(1px 1px at 13% 22%,#fff 50%,transparent),radial-gradient(1px 1px at 71% 9%,#fff 50%,transparent),
-    radial-gradient(1.5px 1.5px at 44% 61%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 88% 41%,#e4ecff 50%,transparent),radial-gradient(1px 1px at 27% 83%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 59% 32%,#cfe0ff 50%,transparent),radial-gradient(1.5px 1.5px at 8% 68%,#fff 50%,transparent),
-    radial-gradient(1px 1px at 37% 12%,#fff 50%,transparent),radial-gradient(1px 1px at 79% 77%,#fff 50%,transparent);
-  background-size:317px 233px,317px 233px,317px 233px,421px 197px,421px 197px,421px 197px,563px 281px,563px 281px,563px 281px;
-  -webkit-mask-image:linear-gradient(180deg,#000 40%,transparent);mask-image:linear-gradient(180deg,#000 40%,transparent)}
-.art .wisps{left:-10%;right:-10%;top:4%;height:26%;opacity:calc(.55 - .3 * var(--n));filter:blur(6px);
-  background:
-    radial-gradient(28% 9% at 22% 30%,rgba(255,255,255,.55),transparent 70%),
-    radial-gradient(34% 7% at 64% 18%,rgba(255,255,255,.45),transparent 70%),
-    radial-gradient(22% 6% at 82% 58%,rgba(255,255,255,.4),transparent 70%),
-    radial-gradient(30% 8% at 46% 72%,rgba(255,255,255,.35),transparent 70%)}
-.art .sun{left:50%;top:-30vh;width:90vh;height:60vh;translate:-50% 0;opacity:calc(1 - var(--n));
-  background:radial-gradient(closest-side,rgba(255,250,235,.55),rgba(255,250,235,.12) 55%,transparent)}
-.art .moon{left:calc(28% - 4vh);top:calc(38% - 25vh);width:8vh;height:8vh;border-radius:50%;opacity:var(--n);
-  background:#cdd7e6 url(../assets/moon.webp) center/cover;
-  box-shadow:0 0 3vh 1vh rgba(190,214,255,.22),0 0 12vh 4vh rgba(150,185,255,.12)}
-.art .bank{left:-4%;right:-4%;top:calc(38% - 8.5vh);height:8.6vh;filter:blur(1.2px);
-  opacity:calc(.95 - .55 * var(--n));
-  background:
-    radial-gradient(9% 70% at 10% 100%,rgba(255,255,255,.95),rgba(255,255,255,.6) 45%,transparent 72%),
-    radial-gradient(7% 46% at 19% 100%,rgba(255,255,255,.85),transparent 70%),
-    radial-gradient(13% 98% at 47% 100%,rgba(255,255,255,.97),rgba(246,250,252,.7) 45%,transparent 72%),
-    radial-gradient(8% 60% at 58% 100%,rgba(255,255,255,.85),transparent 70%),
-    radial-gradient(10% 74% at 83% 100%,rgba(255,255,255,.92),rgba(255,255,255,.55) 45%,transparent 72%),
-    radial-gradient(7% 40% at 93% 100%,rgba(255,255,255,.8),transparent 70%),
-    linear-gradient(180deg,transparent 70%,rgba(176,196,214,.75))}
-/* a path of light on the water: a soft column of glow with faint lines in it, closer together toward the horizon
-   (a plane in perspective) and narrowing into it */
-.art .sunpath,.art .moonpath{top:38%;bottom:0;width:min(40vw,420px);translate:-50% 0;filter:blur(.5px);
-  background:repeating-linear-gradient(180deg,rgba(255,255,255,.5) 0 1px,transparent 1px 6px),
-    linear-gradient(90deg,transparent,rgba(255,255,255,.28) 35%,rgba(255,255,255,.38) 50%,rgba(255,255,255,.28) 65%,transparent);
-  transform:perspective(30vh) rotateX(38deg);transform-origin:50% 0;
-  -webkit-mask-image:radial-gradient(44% 115% at 50% 0,#000 5%,rgba(0,0,0,.35) 50%,transparent 85%);
-  mask-image:radial-gradient(44% 115% at 50% 0,#000 5%,rgba(0,0,0,.35) 50%,transparent 85%)}
-.art .sunpath{left:50%;opacity:calc((1 - var(--n)) * .8)}
-.art .moonpath{left:28%;width:min(24vw,260px);opacity:calc(var(--n) * .85)}

@@ -1,8 +1,8 @@
 // The raw page: the whole site in HTML and CSS alone, at raw/ (raw/index.html).
 //   node tools/raw/build.js
-// No JavaScript and no rendering: the same tree as index.html (the corner controls, the statement, the layers and
-// their panels, drawn by the page's own VIEWS), with the sea replaced by a still picture made of CSS. What the page
-// does with script, CSS does here:
+// No JavaScript, no picture, no motion: the same tree as index.html (the corner controls, the statement, the layers
+// and their panels, drawn by the page's own VIEWS) on the palette's flat ground. What the page does with script, CSS
+// does here:
 //   - the address: a layer is the target of the address (#work, #blog/<post>), so :target shows it, as the page's
 //     own router shows #work; with nothing targeted, the ocean;
 //   - the language: every piece of copy is there in both, and two radio buttons pick which shows (:has);
@@ -54,8 +54,8 @@ for (const k of [".layer.on,.layer:target", ".panel.on,.panel:target", ".layer.s
   if (!styles.includes(k)) throw new Error("index.html's styles changed: " + k);
 const tokens = sel => { const m = styles.match(new RegExp(sel.replace(/[[\]().:"=]/g, "\\$&") + "\\{([^}]*)\\}")); if (!m) throw new Error("no tokens for " + sel);
   return m[1].split(";").map(d => d.trim()).filter(d => /^--(sky|haze|ink|ink-soft|rule|veil|focus|scene):/.test(d)).join(";") + ";"; };
-const DAY = tokens(":root") + '--n:0;--mode-en:"day";--mode-fr:"jour";';
-const NIGHT = tokens(':root[data-theme="dark"]') + '--n:1;--mode-en:"night";--mode-fr:"nuit";';
+const DAY = tokens(":root") + '--mode-en:"day";--mode-fr:"jour";';
+const NIGHT = tokens(':root[data-theme="dark"]') + '--mode-en:"night";--mode-fr:"nuit";';
 const RAW_CSS = fs.readFileSync(path.join(__dirname, "raw.css"), "utf8")
   .replace("/* DAY */", DAY).replace("/* NIGHT */", NIGHT).replace("/* DAY */", DAY).replace("/* NIGHT */", NIGHT);
 
@@ -82,8 +82,6 @@ ${RAW_CSS}
 </style>
 </head>
 <body class="ready">
-<div class="art" aria-hidden="true"><i class="haze"></i><i class="stars"></i><i class="wisps"></i><i class="sun"></i><i class="moon"></i><i class="bank"></i><i class="sunpath"></i><i class="moonpath"></i></div>
-
 ${mark}
 
 <div class="chrome tr"><a class="go-menu" href="#menu">${both(T.en.menu, T.fr.menu)}</a><a class="go-home" href="#">${both(T.en.close, T.fr.close)}</a></div>
