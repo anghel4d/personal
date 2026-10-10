@@ -27,6 +27,8 @@ node ../shader-cost/capture.js http://localhost:8000/index.html cap.json   # eve
 ./check.sh cap.json 9                                                     # family 9: A17 Pro and later
 ```
 
+Without a working WebGPU (a container, a CI box), `node capture-mock.js cap.json` records the same modules with a stand-in for the GPU.
+
 One line per module, OK or FAILED with the error, its line and column, the source line and a caret. Set `OUT` to keep the full reports, which also list each entry point's automatic bind group layout and the size of the Metal it generates. `wgslc-report --dump-msl=FILE` writes that Metal out.
 
 ## What it found (October 2026)
