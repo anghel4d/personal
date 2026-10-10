@@ -655,16 +655,26 @@ A4D_SHOWN.then(() => setTimeout(() => (window.requestIdleCallback || setTimeout)
    WebGPU renderer and the three.js one (the fallback) take what they need from lagoon(), so there is one of each. It
    is computed on the first call, when a renderer starts, not while the page is parsed. */
 let LAGOON_ = null;
-/* The veil's frosting is the scene's own blur: under a panel the final pass widens its blur by up to 18 CSS pixels
-   (the frosted glass a backdrop filter would make), eased in and out with the veil. It reads the HDR frame's mip
-   pyramid, which the defocus already builds every frame (a power-of-two down chain, each level read back through the
-   hardware's bilinear filter in a 4-tap B-spline), so the frosting costs almost nothing and the compositor has no
-   full-screen filter to run. The scene keeps moving behind it, at 15 frames a second. */
+/* The veil's frosting: what CSS's backdrop-filter blur(18px) saturate(1.15) draws, done by the renderer on the
+   finished frame (tone-mapped and encoded, as the screen shows it, which is where CSS blurs too) with the dual filter:
+   a chain of half-size steps down, then up again, each step a few bilinear taps (Bjorge 2015). Under a panel the final
+   pass draws into a texture instead of the screen, the frost blurs it, saturates it by CSS's own matrix, and lays it
+   over the sharp frame by the veil's opacity, eased in and out with the veil (0.22 s). Nothing for the compositor to
+   do but show the canvas, and the scene keeps moving behind the panel at its full rate.
+   sceneVeil: the veil's opacity, 0 to 1. frostPlan: the filter's levels and tap offset for a Gaussian of sigma
+   render pixels (measured on an impulse: four levels at offset 1 give 13.3 px, each level doubles it, and the offset
+   widens it as FROST_S says). */
 let VEIL = 0, VEIL_T = -1;
 const sceneVeil = S => {
-  const now = performance.now(), dt = VEIL_T < 0 ? 0 : Math.min(0.05, (now - VEIL_T) / 1000); VEIL_T = now;
+  const now = performance.now(), dt = VEIL_T < 0 ? 0 : (now - VEIL_T) / 1000; VEIL_T = now;   // in step with the CSS veil at any frame rate
   VEIL = S.open ? Math.min(1, VEIL + dt / 0.22) : Math.max(0, VEIL - dt / 0.22);
-  return VEIL * VEIL * (3 - 2 * VEIL) * 18;            // CSS pixels
+  return VEIL * VEIL * (3 - 2 * VEIL);
+};
+const FROST_PX = 18, FROST_SAT = 1.15, FROST_S = [1, 1.43, 1.81, 2.16, 2.55], FROST_K = [1, 1.5, 2, 2.5, 3];
+const frostPlan = sigma => {
+  const N = Math.max(2, Math.min(5, 4 + Math.floor(Math.log2(Math.max(sigma, 1) / 13.3))));
+  const r = sigma / (13.3 * 2 ** (N - 4)); let i = 0; while (i < 3 && r > FROST_S[i + 1]) i++;
+  return { N, k: Math.max(1, FROST_K[i] + (FROST_K[i + 1] - FROST_K[i]) * (r - FROST_S[i]) / (FROST_S[i + 1] - FROST_S[i])) };
 };
 const lagoon = () => LAGOON_ || (LAGOON_ = (() => {
 /* ---------- the look, in one place ---------- */
@@ -1585,7 +1595,7 @@ void main(){
   o = vec4(r / 16.0 + texture(tBase, vUv).rgb, 1.0);
 }`, { tIn: null, tBase: null, uTexel: new THREE.Vector2() });
 const mFinal = shader(`
-uniform sampler2D tHDR, tBloom; uniform float uExposure, uNight, uBlurPx, uHazeV, uHazeS, uHazeG, uVeil; uniform int uFrame;
+uniform sampler2D tHDR, tBloom; uniform float uExposure, uNight, uBlurPx, uHazeV, uHazeS, uHazeG; uniform int uFrame;
 uniform vec3 uAir, uGlint; uniform mat3 uCamRot, uGrade; uniform mat4 uInvProj;
 const float HZ_UP = ${HZ.up.toFixed(6)}, HZ_DOWN = ${HZ.down.toFixed(6)};
 const float MOON_Q1 = ${(2 * LOOK.moon.size ** 2).toExponential(4)}, MOON_Q2 = ${(8 * LOOK.moon.size ** 2).toExponential(4)};   // 1 - cos of 2 and 4 moon radii
@@ -1669,7 +1679,7 @@ void main(){
   float onMoon = uNight * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, uGlint)));
   vec3 dof = 0.25 * uBlurPx * max(MYOPIA + sy * ${(LOOK.myopia.sharp[1] / 1.25).toFixed(4)}, 0.0) * (1.0 - onMoon);
   float hb = uHazeS * f;
-  vec3 sig = sqrt(dof * dof + hb * hb + uVeil * uVeil);
+  vec3 sig = sqrt(dof * dof + hb * hb);
   // per channel: from 0.6 px a mip level (level 0's B-spline is a Gaussian of 0.6 px); from 0.15 to 0.6 px a blend
   // from the frame itself to level 0; below 0.15 px a blur cannot be seen
   vec3 m = mix(log2(max(sig, 0.6) / 0.6), clamp((sig - 0.15) / 0.45, 0.0, 1.0) - 1.0, lessThan(sig, vec3(0.6)));
@@ -1683,10 +1693,12 @@ void main(){
   vec3 t = srgbOetf(clamp(rec2020to709(gt7(rec709to2020(c))), 0.0, 1.0));
   t += (hash12(gl_FragCoord.xy + float(uFrame % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   o = vec4(clamp(t, 0.0, 1.0), 1.0);
-}`, { tHDR: null, tBloom: null, uExposure: 1.2, uNight: 0, uFrame: 0, uBlurPx: 0, uHazeV: 0, uHazeS: 0, uHazeG: 0, uVeil: 0,
+}`, { tHDR: null, tBloom: null, uExposure: 1.2, uNight: 0, uFrame: 0, uBlurPx: 0, uHazeV: 0, uHazeS: 0, uHazeG: 0,
   uAir: new THREE.Vector3(), uGrade: new THREE.Matrix3(), uCamRot: camRot, uInvProj: camera.projectionMatrixInverse, uGlint: light.glint });
 
 const hdrRT = rt(1, 1, HALF, { mip: true });   // mipmapped: the defocus reads its levels
+const ldrRT = rt(1, 1, THREE.UnsignedByteType);   // the finished frame, under a panel, for the frost
+let frostD = [], frostU = [];
 let bloom = [];
 // the airlight: the horizon's haze colour, as the sky shader makes it (horizonCol * 1.12, times the sky's brightness)
 const airDay = new THREE.Vector3(), airNight = new THREE.Vector3(0.010, 0.029, 0.050);
@@ -1719,12 +1731,38 @@ function post(n, frameNo){
     mBloomUp.uniforms.uTexel.value.set(1 / lo.d.width, 1 / lo.d.height);
     draw(mBloomUp, bloom[i].u, { tIn: (i === bloom.length - 2 ? lo.d : lo.u).texture, tBase: bloom[i].d.texture });
   }
-  draw(mFinal, null, { tHDR: hdrRT.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
+  const v = sceneVeil(S);
+  draw(mFinal, v > 0.001 ? ldrRT : null, { tHDR: hdrRT.texture, tBloom: (bloom.length > 1 ? bloom[0].u : bloom[0].d).texture,
     uExposure: LOOK.exposure * (1.0 + 2.2 * n), uNight: n, uFrame: frameNo,
     uBlurPx: LOOK.myopia.blur * Math.PI / 180 / mWater.uniforms.uPixAng.value * (1 + (LOOK.myopia.night - 1) * n),
     uHazeV: LOOK.haze.veil[0] + (LOOK.haze.veil[1] - LOOK.haze.veil[0]) * n,
     uHazeS: LOOK.haze.blur[0] + (LOOK.haze.blur[1] - LOOK.haze.blur[0]) * n,
-    uHazeG: LOOK.haze.glow[0] + (LOOK.haze.glow[1] - LOOK.haze.glow[0]) * n, uVeil: sceneVeil(S) * PX_PER_CSS * quality });
+    uHazeG: LOOK.haze.glow[0] + (LOOK.haze.glow[1] - LOOK.haze.glow[0]) * n });
+  if (v > 0.001) frost(v);
+}
+// the veil's frosting (see sceneVeil): the finished frame down the dual filter's chain and up again, saturated, over
+// the sharp frame by the veil's opacity
+const FROST_GLSL = `uniform sampler2D tSrc; uniform vec2 uOff;
+vec3 tap(vec2 uv){ return texture(tSrc, uv).rgb; }
+vec3 upf(vec2 uv){ vec2 h = uOff;
+  return (tap(uv + vec2(-2.0 * h.x, 0.0)) + tap(uv + vec2(2.0 * h.x, 0.0)) + tap(uv + vec2(0.0, -2.0 * h.y)) + tap(uv + vec2(0.0, 2.0 * h.y))
+    + 2.0 * (tap(uv - h) + tap(uv + h) + tap(uv + vec2(h.x, -h.y)) + tap(uv - vec2(h.x, -h.y)))) / 12.0; }
+`;
+const mFrostDown = shader(FROST_GLSL + `void main(){ vec2 h = uOff;
+  o = vec4((4.0 * tap(vUv) + tap(vUv - h) + tap(vUv + h) + tap(vUv + vec2(h.x, -h.y)) + tap(vUv - vec2(h.x, -h.y))) / 8.0, 1.0); }`,
+  { tSrc: null, uOff: new THREE.Vector2() });
+const mFrostUp = shader(FROST_GLSL + `void main(){ o = vec4(upf(vUv), 1.0); }`, { tSrc: null, uOff: new THREE.Vector2() });
+const mFrost = shader(FROST_GLSL + `uniform sampler2D tSharp; uniform float uMix;
+void main(){ vec3 b = upf(vUv);
+  b = clamp(mix(vec3(dot(b, vec3(0.213, 0.715, 0.072))), b, ${FROST_SAT.toFixed(2)}), 0.0, 1.0);    // CSS's saturate()
+  o = vec4(mix(texture(tSharp, vUv).rgb, b, uMix), 1.0); }`, { tSrc: null, uOff: new THREE.Vector2(), tSharp: null, uMix: 0 });
+function frost(v){
+  const { N, k } = frostPlan(FROST_PX * PX_PER_CSS * quality);
+  const off = (m, t) => { m.uniforms.uOff.value.set(0.5 * k / t.width, 0.5 * k / t.height); return t.texture; };
+  let src = ldrRT;
+  for (let i = 1; i <= N; i++){ draw(mFrostDown, frostD[i], { tSrc: off(mFrostDown, src) }); src = frostD[i]; }
+  for (let i = N - 1; i >= 1; i--){ draw(mFrostUp, frostU[i], { tSrc: off(mFrostUp, src) }); src = frostU[i]; }
+  draw(mFrost, null, { tSrc: off(mFrost, src), tSharp: ldrRT.texture, uMix: v });
 }
 
 /* ---------- sizing, framing, adaptive quality ---------- */
@@ -1747,6 +1785,13 @@ function frame(){
   res.set(W, H);
   for (const b of bloom){ b.d.dispose(); b.u.dispose(); }
   bloom = [];
+  ldrRT.setSize(W, H);
+  for (const t of [...frostD, ...frostU]) if (t) t.dispose();
+  frostD = []; frostU = [];
+  for (let i = 1; i <= 5; i++){
+    frostD[i] = rt(Math.max(1, W >> i), Math.max(1, H >> i), HALF);
+    if (i < 5) frostU[i] = rt(Math.max(1, W >> i), Math.max(1, H >> i), HALF);
+  }
   for (let i = 1; i <= 6; i++){
     const bw = Math.max(1, W >> i), bh = Math.max(1, H >> i);
     bloom.push({ d: rt(bw, bh, HALF), u: rt(bw, bh, HALF) });
@@ -1801,11 +1846,11 @@ function tick(now){
   raf = requestAnimationFrame(tick);
   if (fence && gl.getSyncParameter(fence, gl.SYNC_STATUS) === gl.SIGNALED){ gpuMs = now - fenceT; gl.deleteSync(fence); fence = null; }
   // pace against a running target, so any refresh rate averages 30 frames a second
-  const interval = (S.open ? 2 : 1) * FRAME_MS;
+  const interval = FRAME_MS;
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (fence && now - fenceT > 1000){ gl.deleteSync(fence); fence = null; }          // a fence that never signals tells nothing
-  if (!S.open){
+  {
     lateN = fence || gpuMs > FRAME_MS + 4 ? lateN + 1 : 0;     // still running, or last seen done a refresh too late
     underN = !fence && gpuMs < FRAME_MS * 0.55 ? underN + 1 : 0;
     if (lateN >= 3 && quality > 0.5){ quality = Math.max(0.5, quality * 0.8); lateN = 0; frame(); }
@@ -1879,7 +1924,7 @@ struct Frame {
   invProj: mat4x4f, camRot: mat3x3f,
   cam: vec3f, time: f32, sun: vec3f, night: f32, sunCol: vec3f, pixAng: f32, glint: vec3f, flatT: f32,
   lw: vec3f, causK: f32, amb: vec3f, frame: f32, res: vec2f, blurPx: f32, exposure: f32, air: vec3f, hazeV: f32,
-  grade: mat3x3f, hazeS: f32, hazeG: f32, veil: f32, _b: f32,
+  grade: mat3x3f, hazeS: f32, hazeG: f32, _a: f32, _b: f32,
 };
 @group(0) @binding(0) var<uniform> F: Frame;
 const PI = 3.14159265359;
@@ -2565,7 +2610,7 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   // at night the eye looks at the moon: no defocus within two moon radii of it, full defocus from four
   let onMoon = F.night * (1.0 - smoothstep(MOON_Q1, MOON_Q2, 1.0 - dot(rdir, F.glint)));
   let dof = 0.25 * F.blurPx * max(MYOPIA + sy * ${(LOOK.myopia.sharp[1] / 1.25).toFixed(4)}, vec3f(0.0)) * (1.0 - onMoon); let hb = F.hazeS * f;
-  let sig = sqrt(dof * dof + hb * hb + F.veil * F.veil);
+  let sig = sqrt(dof * dof + hb * hb);
   // per channel: from 0.6 px a mip level (level 0's B-spline is a Gaussian of 0.6 px); from 0.15 to 0.6 px a blend
   // from the frame itself to level 0; below 0.15 px a blur cannot be seen
   let m = min(select(log2(max(sig, vec3f(0.6)) / 0.6), clamp((sig - 0.15) / 0.45, vec3f(0.0), vec3f(1.0)) - 1.0, sig < vec3f(0.6)),
@@ -2579,6 +2624,36 @@ fn srgbOetf(x: vec3f) -> vec3f { return mix(12.92 * x, 1.055 * pow(x, vec3f(1.0 
   var t = srgbOetf(clamp(rec2020to709(gt7(rec709to2020(c))), vec3f(0.0), vec3f(1.0)));
   t += (hash12(fc + f32(i32(F.frame) % 211) * 17.37) - 0.5) * 0.028 * (0.35 + 0.65 * (1.0 - t));
   return vec4f(clamp(t, vec3f(0.0), vec3f(1.0)), 1.0);
+}`;
+
+// the veil's frosting (see sceneVeil): the dual filter's steps down and up, and the last step up laid over the sharp
+// frame, saturated as CSS does; every texture here keeps the canvas's row order
+const frostWGSL = `
+struct Frost { off: vec2f, mixv: f32, _p: f32 };
+@group(0) @binding(0) var<uniform> P: Frost;
+@group(0) @binding(1) var tSrc: texture_2d<f32>;
+@group(0) @binding(2) var sLin: sampler;
+@group(0) @binding(3) var tSharp: texture_2d<f32>;
+struct VO { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  var o: VO; o.pos = vec4f(p, 0.0, 1.0); o.uv = vec2f(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); return o;
+}
+fn tap(uv: vec2f) -> vec3f { return textureSampleLevel(tSrc, sLin, uv, 0.0).rgb; }
+fn upf(uv: vec2f) -> vec3f {
+  let h = P.off;
+  return (tap(uv + vec2f(-2.0 * h.x, 0.0)) + tap(uv + vec2f(2.0 * h.x, 0.0)) + tap(uv + vec2f(0.0, -2.0 * h.y)) + tap(uv + vec2f(0.0, 2.0 * h.y))
+    + 2.0 * (tap(uv - h) + tap(uv + h) + tap(uv + vec2f(h.x, -h.y)) + tap(uv - vec2f(h.x, -h.y)))) / 12.0;
+}
+@fragment fn down(i: VO) -> @location(0) vec4f {
+  let h = P.off;
+  return vec4f((4.0 * tap(i.uv) + tap(i.uv - h) + tap(i.uv + h) + tap(i.uv + vec2f(h.x, -h.y)) + tap(i.uv - vec2f(h.x, -h.y))) / 8.0, 1.0);
+}
+@fragment fn up(i: VO) -> @location(0) vec4f { return vec4f(upf(i.uv), 1.0); }
+@fragment fn frost(i: VO) -> @location(0) vec4f {
+  var b = upf(i.uv);
+  b = clamp(mix(vec3f(dot(b, vec3f(0.213, 0.715, 0.072))), b, ${FROST_SAT.toFixed(2)}), vec3f(0.0), vec3f(1.0));   // CSS's saturate()
+  return vec4f(mix(textureSampleLevel(tSharp, sLin, i.uv, 0.0).rgb, b, P.mixv), 1.0);
 }`;
 
 /* ---------- pipelines ---------- */
@@ -2615,6 +2690,11 @@ const [chopRows, chopCols, swellRows, swellCols, surfP, mipP, hashP, bloomDownP,
   module(finalWGSL, "final").then(m => device.createRenderPipelineAsync({ label: "final", layout: "auto",
     vertex: { module: m, entryPoint: "vs" }, fragment: { module: m, entryPoint: "fs", targets: [{ format: canvasFormat }] } }))
 ]);
+
+const frostMod = await module(frostWGSL, "frost");
+const [frostDownP, frostUpP, frostP] = await Promise.all([["down", HDR], ["up", HDR], ["frost", canvasFormat]].map(([entryPoint, format]) =>
+  device.createRenderPipelineAsync({ label: "frost " + entryPoint, layout: "auto", vertex: { module: frostMod, entryPoint: "vs" },
+    fragment: { module: frostMod, entryPoint, targets: [{ format }] } })));
 
 /* ---------- resources ---------- */
 const tex = (w, h, format, usage, mips = 1) => device.createTexture({ size: [w, h], format, usage, mipLevelCount: mips });
@@ -2691,10 +2771,29 @@ device.queue.writeBuffer(firstU, 0, new Uint32Array([1, 0, 0, 0])); device.queue
 
 // the frame-sized targets, rebuilt with the size
 let hdrT = null, skyT = null, hdrView = null, skyView = null, bloom = [], gWater = null, gHdrMips = [], gBloom = [], gFinal = null, W = 0, H = 0;
+// the frost's: the finished frame (ldrT), the chain down (frostD[1..5]) and up (frostU[1..4]), their views, and a
+// bind group per step (an up step reads the level below from either chain); one 256-byte uniform slot per step
+let ldrT = null, ldrView = null, frostD = [], frostU = [], gFrost = null;
+const frostBuf = device.createBuffer({ size: 256 * 11, usage: BU.UNIFORM | BU.COPY_DST }), frostF = new Float32Array(64 * 11);
+const fslot = i => ({ buffer: frostBuf, offset: 256 * i, size: 16 });
 const HDR_LEVELS = 7;
 function sizeTargets(w, h){
   W = w; H = h;
-  if (hdrT){ hdrT.destroy(); skyT.destroy(); }
+  if (hdrT){ hdrT.destroy(); skyT.destroy(); ldrT.destroy(); }
+  for (const t of [...frostD, ...frostU]) if (t) t.tex.destroy();
+  ldrT = tex(W, H, canvasFormat, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING); ldrView = ldrT.createView();
+  frostD = []; frostU = [];
+  for (let i = 1; i <= 5; i++){
+    const mk = () => { const t = tex(Math.max(1, W >> i), Math.max(1, H >> i), HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING); return { tex: t, view: t.createView() }; };
+    frostD[i] = mk(); if (i < 5) frostU[i] = mk();
+  }
+  gFrost = { down: [], upD: [], upU: [] };
+  for (let i = 1; i <= 5; i++) gFrost.down[i] = bg(frostDownP, { 0: fslot(i), 1: i === 1 ? ldrView : frostD[i - 1].view, 2: sClamp });
+  for (let i = 1; i <= 4; i++){
+    gFrost.upD[i] = bg(frostUpP, { 0: fslot(5 + i), 1: frostD[i + 1].view, 2: sClamp });
+    if (i < 4) gFrost.upU[i] = bg(frostUpP, { 0: fslot(5 + i), 1: frostU[i + 1].view, 2: sClamp });
+  }
+  gFrost.out = bg(frostP, { 0: fslot(10), 1: frostU[1].view, 2: sClamp, 3: ldrView });
   for (const b of bloom){ b.d.destroy(); b.u.destroy(); }
   hdrT = tex(W, H, HDR, TARGET, Math.min(mipsOf(W, H), HDR_LEVELS));
   skyT = tex(Math.ceil(W / 2), Math.ceil(H / 2), HDR, TU.RENDER_ATTACHMENT | TU.TEXTURE_BINDING);
@@ -2783,8 +2882,22 @@ function encodeFrame(enc, t, env){
     p.dispatchWorkgroups(Math.ceil(gBloom[i].t.width / 8), Math.ceil(gBloom[i].t.height / 8));
   }
   p.end();
-  const f = enc.beginRenderPass({ label: "final", ...stamp(7), colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+  const v = sceneVeil(S), screen = ctx.getCurrentTexture().createView();
+  const f = enc.beginRenderPass({ label: "final", ...stamp(7), colorAttachments: [{ view: v > 0.001 ? ldrView : screen, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
   f.setPipeline(finalP); f.setBindGroup(0, gFinal); f.draw(3); f.end();
+  if (v > 0.001){
+    // the frost: N steps down, N - 1 up, and the last step up over the sharp frame onto the screen
+    const { N, k } = frostPlan(FROST_PX * PX_PER_CSS * quality);
+    const step = (slot, t, p, g, view, mixv = 0) => {
+      frostF.set([0.5 * k / t.width, 0.5 * k / t.height, mixv], 64 * slot);
+      const r = enc.beginRenderPass({ label: "frost", colorAttachments: [{ view, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+      r.setPipeline(p); r.setBindGroup(0, g); r.draw(3); r.end();
+    };
+    for (let i = 1; i <= N; i++) step(i, i === 1 ? ldrT : frostD[i - 1].tex, frostDownP, gFrost.down[i], frostD[i].view);
+    for (let i = N - 1; i >= 1; i--) step(5 + i, i === N - 1 ? frostD[i + 1].tex : frostU[i + 1].tex, frostUpP, i === N - 1 ? gFrost.upD[i] : gFrost.upU[i], frostU[i].view);
+    step(10, frostU[1].tex, frostP, gFrost.out, screen, v);
+    device.queue.writeBuffer(frostBuf, 0, frostF);
+  }
   if (stamps && stamps.free){
     enc.resolveQuerySet(stamps.set, 0, 2 * PASSES.length, stamps.resolve, 0);
     enc.copyBufferToBuffer(stamps.resolve, 0, stamps.read, 0, 16 * PASSES.length);
@@ -2901,7 +3014,6 @@ function uniforms(t, n, frameNo, cam, mw){
   put(60, [G[0][0], G[1][0], G[2][0]]); put(64, [G[0][1], G[1][1], G[2][1]]); put(68, [G[0][2], G[1][2], G[2][2]]);
   frameF[72] = LOOK.haze.blur[0] + (LOOK.haze.blur[1] - LOOK.haze.blur[0]) * n;
   frameF[73] = LOOK.haze.glow[0] + (LOOK.haze.glow[1] - LOOK.haze.glow[0]) * n;
-  frameF[74] = sceneVeil(S) * PX_PER_CSS * quality;
   device.queue.writeBuffer(frameU, 0, frameF);
   // each caustic pass's window starts where flat water sends the light that lands at the map's corner
   const lw = light.lw;
@@ -2967,11 +3079,11 @@ function tick(now){
   if (!running || dead) return;
   raf = requestAnimationFrame(tick);
   // pace against a running target, so any refresh rate averages 30 frames a second
-  const interval = (S.open ? 2 : 1) * FRAME_MS;
+  const interval = FRAME_MS;
   if (now < nextDraw - 2) return;
   nextDraw = now - nextDraw > interval ? now + interval : nextDraw + interval;
   if (inFlight > 1) return;                    // two frames behind: let the GPU catch up rather than queue a third
-  if (!S.open && gpuLog.length >= 3){
+  if (gpuLog.length >= 3){
     const ms = [...gpuLog].sort((a, b) => a - b)[gpuLog.length >> 1];    // the median of the last five
     const per = ms / costAt(quality);
     lateN = inFlight > 0 || ms > FRAME_MS * 0.8 ? lateN + 1 : 0;
