@@ -17,7 +17,7 @@ const { ROOT, html, cut, T, B, VIEWS, posts, BLOG_OPEN } = require("../site.js")
 // both languages: English as the page has it, French beside it with its ids marked, so no id is there twice
 const both = (en, fr, tag = "span") => en === fr ? en : `<${tag} class="l-en">${en}</${tag}><${tag} class="l-fr" lang="fr">${fr}</${tag}>`;
 const frIds = s => s.replace(/\b(id|aria-labelledby|aria-controls)="([^"]+)"/g, '$1="$2-fr"');
-const ORDER = ["home", "menu", "work", "about", "blog", "contact"].filter(l => BLOG_OPEN || l !== "blog");
+const ORDER = ["home", "menu", "work", "about", "blog", "contact"];
 const pz = (r, l) => {                                     // a layer's two ends: the one before it, the one after
   const i = ORDER.indexOf(r), t = T[l], a = ORDER[i - 1], b = ORDER[i + 1];
   return `<p class="pz">${a ? `<a href="#${a === "home" ? "" : a}">${t.prev} · ${t[a]}</a>` : "<span></span>"}${b ? `<a href="#${b}">${t.next} · ${t[b]}</a>` : ""}</p>`;
@@ -28,7 +28,8 @@ const inner = (r, view) => ["en", "fr"].map(l => {
 }).join("");
 // a post's address points inside it (an empty anchor at the start of its text), so the browser unfolds it
 const postsWithAnchor = l => posts.map(p => l === "fr" ? p : { ...p, html: `<span class="anchor" id="blog/${p.slug}"></span>` + p.html });
-const blogView = (t, l) => VIEWS.blog(t, l, "", postsWithAnchor(l), new Set(), B.inline);
+// set aside: every tab greyed out, and "(coming soon)"
+const blogView = (t, l) => VIEWS.blog(t, l, "", BLOG_OPEN && postsWithAnchor(l), new Set(), B.inline);
 
 // the head: the page's own styles (the fonts inside them), with the files one level up, and the raw page's own
 const styles = [...html.slice(0, html.indexOf("</head>")).matchAll(/<style>[\s\S]*?<\/style>/g)].map(m => m[0]).join("\n")
@@ -50,9 +51,7 @@ const RAW_CSS = fs.readFileSync(path.join(__dirname, "raw.css"), "utf8")
 
 const icon = (html.match(/<link rel="icon"[^>]*>/) || [""])[0];
 const mark = cut('<a class="chrome tl"', "</a>");
-// the blog set aside: greyed out, "(coming soon)", no link, and no panel
-const menuLinks = ["work", "about", "blog", "contact"].map(r => BLOG_OPEN || r !== "blog" ? `<a href="#${r}">${both(T.en[r], T.fr[r])}</a>`
-  : `<span class="soon" aria-disabled="true">${both(T.en.blog, T.fr.blog)}<small>${both(T.en.soon, T.fr.soon)}</small></span>`).join("\n    ");
+const menuLinks = ["work", "about", "blog", "contact"].map(r => `<a href="#${r}">${both(T.en[r], T.fr[r])}</a>`).join("\n    ");
 const ext = cut('<div class="ext">', "</div>");
 
 const page = `<!doctype html>
@@ -98,7 +97,8 @@ ${mark}
 
 <section class="layer panel" id="work" aria-labelledby="workH">${inner("work", t => VIEWS.work(t))}</section>
 <section class="layer panel" id="about" aria-labelledby="aboutH">${inner("about", t => VIEWS.about(t))}</section>
-${BLOG_OPEN ? `<section class="layer panel" id="blog" aria-labelledby="blogH">${inner("blog", blogView)}</section>\n` : ""}<section class="layer panel" id="contact" aria-labelledby="contactH">${inner("contact", t => VIEWS.contact(t))}</section>
+<section class="layer panel" id="blog" aria-labelledby="blogH">${inner("blog", blogView)}</section>
+<section class="layer panel" id="contact" aria-labelledby="contactH">${inner("contact", t => VIEWS.contact(t))}</section>
 </body>
 </html>
 `;

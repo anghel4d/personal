@@ -127,8 +127,6 @@ a{color:inherit}
 
 nav.menu .inner{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(10px,2.2vh,22px)}
 nav.menu a{font-style:italic;font-size:clamp(34px,5.4vw,68px);line-height:1.1;text-decoration:none;font-variation-settings:"opsz" 72;font-weight:300}
-nav.menu .soon{font-style:italic;font-size:clamp(34px,5.4vw,68px);line-height:1.1;font-variation-settings:"opsz" 72;font-weight:300;color:var(--ink-soft);opacity:.5;cursor:default;text-align:center}
-nav.menu .soon small{display:block;font-family:var(--mono);font-style:normal;font-size:12.5px;font-weight:400;letter-spacing:.02em;text-transform:lowercase;margin-top:.2em}
 nav.menu a:hover{text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:.16em}
 nav.menu .ext{font-family:var(--mono);font-style:normal;font-size:12.5px;margin-top:clamp(18px,4vh,40px);display:flex;gap:28px;font-weight:400}
 nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-weight:400}
@@ -274,8 +272,8 @@ addEventListener("pointermove", e => {
   ptLast = [(e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1];
   if (!ptTimer) ptTimer = setTimeout(ptSend, Math.max(0, 33 - (performance.now() - ptAt)));
 }, { passive: true });
-// the blog, set aside for now: greyed out in the menu, "(coming soon)", out of the column and the addresses. Its
-// files stay; true brings it back (then rerun tools/meta/build.js)
+// the blog, set aside for now: its panel shows every tab greyed out and "(coming soon)", and no post is fetched or
+// has an address. Its files stay; true brings it back (then rerun tools/meta/build.js)
 const BLOG_OPEN = false;
 const T = {
 en:{
@@ -414,8 +412,12 @@ const VIEWS = {
     `<blockquote>${esc(t.stance)}</blockquote><p>${esc(t.noted)}</p>`,
   contact: t => `<h1 id="contactH">${esc(t.contactH)}</h1><div class="contact"><p>${esc(t.contactLead)}</p>
      <a class="big" href="mailto:matei3d@gmail.com">matei3d@gmail.com</a><p>${t.contactRest}</p></div>`,
-  // the blog: its tabs, and the open tab's posts, each a row that unfolds (posts: null while they load)
+  // the blog: its tabs, and the open tab's posts, each a row that unfolds (posts: null while they load; false while
+  // the blog is set aside: every tab greyed out, and "(coming soon)")
   blog: (t, lang, tabId, posts, open, inline) => {
+    if (posts === false) return `<h1 id="blogH">${esc(t.blogH)}</h1><div class="tabs" aria-labelledby="blogH">` +
+      t.tabs.map(x => `<button type="button" aria-disabled="true" tabindex="-1">${esc(x.t)}</button>`).join("") +
+      `</div><p class="empty">${esc(t.soon)}</p>`;
     const tab = t.tabs.find(x => x.id === tabId && x.open) || t.tabs.find(x => x.open);
     return `<h1 id="blogH">${esc(t.blogH)}</h1><div class="tabs" role="tablist" aria-labelledby="blogH">` +
       t.tabs.map(x => `<button type="button" role="tab" id="tab-${x.id}" data-tab="${x.id}" aria-controls="tabpanel"` +
@@ -432,7 +434,7 @@ const VIEWS = {
   }
 };
 /* views:end */
-function renderBlog(t){ document.querySelector("#blog .inner").innerHTML = VIEWS.blog(t, lang, blogTab, POSTS, openPosts, s => A4D_BLOG.inline(s)); }
+function renderBlog(t){ document.querySelector("#blog .inner").innerHTML = VIEWS.blog(t, lang, blogTab, BLOG_OPEN && POSTS, openPosts, s => A4D_BLOG.inline(s)); }
 function render(){
   const t = T[lang];
   document.documentElement.lang = lang;
@@ -440,7 +442,7 @@ function render(){
   document.getElementById("statement").innerHTML = t.statement;
   document.querySelectorAll("[data-lang]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
   for (const v of ["work", "about", "contact"]) document.querySelector(`#${v} .inner`).innerHTML = VIEWS[v](t);
-  if (BLOG_OPEN) renderBlog(t);
+  renderBlog(t);
   document.querySelectorAll("a[data-go]").forEach(a => a.setAttribute("href", addr(a.dataset.go)));
   updateThemeLabel();
   updateMenuLabel();
@@ -450,7 +452,7 @@ function render(){
 const body = document.body, menuBtn = document.getElementById("menuBtn");
 let current = "home";
 // a route is a layer, or a blog post: "blog/slug"
-const LAYERS = ["menu","work","about","blog","contact"].filter(l => BLOG_OPEN || l !== "blog"), routable = h => LAYERS.includes(h.split("/")[0]);
+const LAYERS = ["menu","work","about","blog","contact"], routable = h => LAYERS.includes(BLOG_OPEN ? h.split("/")[0] : h);
 // Addresses. On anghel4d.com they are paths (/work/, /blog/knowledge-work/), each with a small page of its own that
 // gives a shared link its preview and hands over to this one (tools/meta/build.js writes them); elsewhere (a local
 // preview, a copy of the page) they are the part after #.
@@ -479,7 +481,7 @@ function show(id){
   body.classList.add("open");
   const el = document.getElementById(layer), at = post && document.getElementById("post-" + post);
   if (at){ fold(at, true, true); openPosts.add(post); }
-  if (layer === "blog" && !POSTS) loadBlog();
+  if (layer === "blog" && !POSTS && BLOG_OPEN) loadBlog();
   el.classList.add("on"); el.scrollTop = 0;
   if (at) at.scrollIntoView({ block: "start" });
   void el.offsetWidth; el.classList.add("shown");          // laid out now, so it fades in from this very frame
@@ -528,7 +530,7 @@ document.querySelectorAll("[data-lang]").forEach(b => b.addEventListener("click"
    one at the top, "previous · work", and the panel leans down. It drains as soon as the scrolling stops. Full, it
    breaks: the panel moves on and its neighbour comes in from the other side, at its end when going back. It arms only
    on a fresh gesture made at the edge, so the momentum of the scroll that reached the edge cannot fill it. */
-const ORDER = ["home", "menu", "work", "about", "blog", "contact"].filter(l => BLOG_OPEN || l !== "blog");
+const ORDER = ["home", "menu", "work", "about", "blog", "contact"];
 const besideOf = d => { const i = ORDER.indexOf(current); return i < 0 ? undefined : ORDER[i + d]; };   // d: 1 next, -1 back
 const poise = document.getElementById("poise"), poiseFill = poise.querySelector("i"), poiseLabel = poise.querySelector("span");
 let pz = 0, dir = 1, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = 0, touch = null, breaking = false;
@@ -660,9 +662,6 @@ document.getElementById("themeBtn").addEventListener("click", () => { mode = mod
 /* ---------------- boot ---------------- */
 lang = load("a4d-lang") === "fr" ? "fr" : (navigator.language || "").toLowerCase().startsWith("fr") && !load("a4d-lang") ? "fr" : "en";
 applyTheme(); S.night = S.targetNight;
-// the blog set aside: its menu entry greyed out, "(coming soon)" under it, and no link
-if (!BLOG_OPEN) document.querySelector('#menu [data-go="blog"]').outerHTML =
-  '<span class="soon" aria-disabled="true"><span data-i18n="blog">Blog</span><small data-i18n="soon">(coming soon)</small></span>';
 render();
 const h0 = here(); if (routable(h0)){ show(h0); if (PRETTY) try{ history.replaceState(null, "", addr(h0)); }catch(e){} }
 // the address map comes last: the title and tags follow the address once it has been parsed
@@ -3382,7 +3381,7 @@ addEventListener("hashchange", () => { if (location.hash === "#diag") start(); }
 </script>
 
 <!-- routes:begin -->
-<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Broadside Technology: Broadside builds agentic AI systems and high-performance simulation software, and does model post-training, harness engineering and systems architecture for business clients. Its…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to…","url":"https://anghel4d.com/about/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"}}</script>
+<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Broadside Technology: Broadside builds agentic AI systems and high-performance simulation software, and does model post-training, harness engineering and systems architecture for business clients. Its…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to…","url":"https://anghel4d.com/about/","type":"website"},"blog":{"doc":"Blog · Matei Anghel","title":"Blog","desc":"Technical, Culture and Singularity Koans: coming soon.","url":"https://anghel4d.com/blog/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"}}</script>
 <!-- routes:end -->
 </body>
 </html>

@@ -47,8 +47,8 @@ const routes = {
   blog: { title: T.blog, desc: `${open.t}: ${posts.filter(p => p.tab === open.id).map(p => p.h).join(" \u00b7 ")}` },
   contact: { title: T.contact, desc: T.contactLead }
 };
-// the blog set aside: out of the address map, and its pages (blog/) left as they are, for when it comes back
-if (!BLOG_OPEN) delete routes.blog;
+// the blog set aside: its tabs coming soon, its posts out of the address map, and their pages (blog/) left as they are
+if (!BLOG_OPEN) routes.blog.desc = `${T.tabs.map(x => x.t).join(", ").replace(/, ([^,]*)$/, " and $1")}: coming soon.`;
 if (BLOG_OPEN) for (const p of posts) routes["blog/" + p.slug] = { title: p.h, desc: opening(plain(p.first)), date: p.date, src: p.src };
 for (const [r, m] of Object.entries(routes)) {
   m.url = r === "home" ? SITE + "/" : `${SITE}/${r}/`;
