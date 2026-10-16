@@ -1,0 +1,65 @@
+# Matei Anghel
+
+> Matei Alexandru Anghel: software engineer and AI researcher, founder and CEO of Broadside Technology, which builds agentic AI systems and the simulated worlds to train them in.
+
+Matei Alexandru Anghel (Matei Anghel) is the founder and CEO of Broadside Technology (https://broadside.tech). Site: https://anghel4d.com/
+
+## About
+
+I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.
+
+I have a tremendous ongoing interest in context engineering, and increasingly in long-living agentic networks such as those described in the AI Village. The central question of preserving human intent through long-running workflows, with hundreds or thousands of AI agents, is currently my main subject of study.
+
+I studied computer science at John Abbott College and Concordia University, and left to build full time. I am Canadian, fluent in English and French, and open to remote work or relocation.
+
+I am a perfectionist.
+
+Named on Jane Street’s official solver leaderboard for the February, March and April 2025 puzzles, and top 25 at NorthSec CTF 2023.
+
+## Work
+
+### Broadside Technology
+
+Founder, since February 2026.
+
+Broadside builds agentic AI systems and the simulated worlds to train them in, and does model post-training, harness engineering and systems architecture for business clients. Its first product is a swarm harness: a fast, scalable agent-to-agent communication layer for coordinating large numbers of AI agents.
+
+### Model post-training and agent systems
+
+Independent contractor, 2023 to 2026.
+
+With a long-time engineering collaborator, I fine-tuned and post-trained image and text models for clients, from dataset preparation and supervised fine-tuning to reinforcement-learning post-training. Then I moved into agent harness engineering: the tools, context management and evaluation loops that let models carry out reliable multi-step work. Under NDA; references available with client permission.
+
+### Broadside Observer
+
+Broadside Technology, since 2026.
+
+An agent-operated research radar in about 14k lines of TypeScript. It polls 14+ academic sources every six hours and has filed 1,800+ research cards, each with full provenance and a human approval gate. Its public endpoint has its own MCP server, so any MCP-capable LLM client can query the corpus directly.
+
+Try it: connect any MCP-capable LLM client to observer.anoptic.io/mcp and ask it for recent research on a topic you care about.
+
+[observer.anoptic.io](https://observer.anoptic.io) · [source](https://github.com/anghel4d/broadside-observer)
+
+### Anoptic Engine
+
+Since 2022.
+
+A real-time world simulator and reinforcement-learning environment, for large-scale agent simulations that general-purpose engines handle poorly. It runs headless on servers, with deterministic replay for reproducible episodes, and its core is lock-free and data-oriented: every system talks through a message-passing event bus, over scoped arena allocators with hugepage backing, so many instances step fast side by side. Written in C23, with C++26 static reflection specializing each module’s interface at compile time, it runs alike on Linux, Windows and Apple Silicon, with a Vulkan mesh-shader renderer to watch it by, reproducible under Nix and tested under ASan, TSan and UBSan.
+
+### anolang
+
+Since 2026.
+
+Anoptic Engine’s scripting language and entity-component layer. Rules select entities by description instead of looping over objects, drawing on SQL, kdb+/q, APL and Datalog, and each statement compiles to a few vectorized column operations over the engine’s structure-of-arrays store, so observations and rewards over thousands of entities stay cheap. The toolchain is about 36k lines of Rust, compiling to BQN’s array runtime, with joins, grouped aggregation, referential integrity and conflict-free batched writes.
+
+[github.com/anghel4d/ano](https://github.com/anghel4d/ano)
+
+Before all this: three years of blockchain product contracting, taking products such as Warren Lotas: The Wild Bunch from concept to launch, with ERC-721 contracts on Ethereum mainnet and full-stack React sites that processed millions of dollars. Before that, IT for the City of Kirkland, Quebec.
+
+## Contact
+
+The fastest way to reach me is email.
+
+Email: matei3d@gmail.com
+
+Code lives on [GitHub](https://github.com/anghel4d), and I am [@pyrusdotc](https://x.com/pyrusdotc) on X.
