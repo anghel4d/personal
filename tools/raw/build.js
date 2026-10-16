@@ -12,12 +12,12 @@
 // The page sends a browser without JavaScript here (<noscript>), and ?raw (or &raw) on any address does the same.
 // tools/meta/build.js runs this too. Rerun it after changing the copy, the views, the styles or the posts.
 const fs = require("fs"), path = require("path");
-const { ROOT, html, cut, T, B, VIEWS, posts } = require("../site.js")(), esc = B.esc;
+const { ROOT, html, cut, T, B, VIEWS, posts, BLOG_OPEN } = require("../site.js")(), esc = B.esc;
 
 // both languages: English as the page has it, French beside it with its ids marked, so no id is there twice
 const both = (en, fr, tag = "span") => en === fr ? en : `<${tag} class="l-en">${en}</${tag}><${tag} class="l-fr" lang="fr">${fr}</${tag}>`;
 const frIds = s => s.replace(/\b(id|aria-labelledby|aria-controls)="([^"]+)"/g, '$1="$2-fr"');
-const ORDER = ["home", "menu", "work", "about", "blog", "contact"];
+const ORDER = ["home", "menu", "work", "about", "blog", "contact"].filter(l => BLOG_OPEN || l !== "blog");
 const pz = (r, l) => {                                     // a layer's two ends: the one before it, the one after
   const i = ORDER.indexOf(r), t = T[l], a = ORDER[i - 1], b = ORDER[i + 1];
   return `<p class="pz">${a ? `<a href="#${a === "home" ? "" : a}">${t.prev} · ${t[a]}</a>` : "<span></span>"}${b ? `<a href="#${b}">${t.next} · ${t[b]}</a>` : ""}</p>`;
@@ -50,7 +50,9 @@ const RAW_CSS = fs.readFileSync(path.join(__dirname, "raw.css"), "utf8")
 
 const icon = (html.match(/<link rel="icon"[^>]*>/) || [""])[0];
 const mark = cut('<a class="chrome tl"', "</a>");
-const menuLinks = ["work", "about", "blog", "contact"].map(r => `<a href="#${r}">${both(T.en[r], T.fr[r])}</a>`).join("\n    ");
+// the blog set aside: greyed out, "(coming soon)", no link, and no panel
+const menuLinks = ["work", "about", "blog", "contact"].map(r => BLOG_OPEN || r !== "blog" ? `<a href="#${r}">${both(T.en[r], T.fr[r])}</a>`
+  : `<span class="soon" aria-disabled="true">${both(T.en.blog, T.fr.blog)}<small>${both(T.en.soon, T.fr.soon)}</small></span>`).join("\n    ");
 const ext = cut('<div class="ext">', "</div>");
 
 const page = `<!doctype html>
@@ -60,7 +62,7 @@ const page = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Matei Anghel</title>
-<meta name="description" content="${esc(T.en.statement.replace(/<[^>]+>/g, ""))}">
+<meta name="description" content="${esc(T.en.statement.replace(/<span class="dinkus"[^>]*>[^<]*<\/span>/, "").replace(/<[^>]+>/g, ""))}">
 <link rel="canonical" href="https://anghel4d.com/">
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
@@ -96,8 +98,7 @@ ${mark}
 
 <section class="layer panel" id="work" aria-labelledby="workH">${inner("work", t => VIEWS.work(t))}</section>
 <section class="layer panel" id="about" aria-labelledby="aboutH">${inner("about", t => VIEWS.about(t))}</section>
-<section class="layer panel" id="blog" aria-labelledby="blogH">${inner("blog", blogView)}</section>
-<section class="layer panel" id="contact" aria-labelledby="contactH">${inner("contact", t => VIEWS.contact(t))}</section>
+${BLOG_OPEN ? `<section class="layer panel" id="blog" aria-labelledby="blogH">${inner("blog", blogView)}</section>\n` : ""}<section class="layer panel" id="contact" aria-labelledby="contactH">${inner("contact", t => VIEWS.contact(t))}</section>
 </body>
 </html>
 `;

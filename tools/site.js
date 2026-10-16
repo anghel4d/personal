@@ -1,6 +1,6 @@
 // What the build tools (tools/meta, tools/raw) read from the site, read the way the page reads it: index.html, its
 // copy (T), its views (the block between views:begin and views:end), blog/blog.js, and the posts in blog/posts/,
-// checked (each one's element a tab, a date, a title of its own). Read afresh on each call.
+// checked (each one's element a tab, a date, a title of its own), and whether the blog is open. Read afresh on each call.
 const fs = require("fs"), path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 module.exports = () => {
@@ -19,5 +19,7 @@ module.exports = () => {
     if (seen.has(p.slug)) throw new Error(`${p.src}: another post has the title "${p.h}"`);
     seen.add(p.slug);
   }
-  return { ROOT, html, cut, T, B, VIEWS, posts };
+  // the blog, open or set aside (index.html's BLOG_OPEN)
+  const m = html.match(/const BLOG_OPEN = (true|false);/); if (!m) throw new Error("index.html: no BLOG_OPEN");
+  return { ROOT, html, cut, T, B, VIEWS, posts, BLOG_OPEN: m[1] === "true" };
 };

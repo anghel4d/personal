@@ -10,12 +10,12 @@
 <!-- what a shared link shows (title, opening words, picture); tools/meta/build.js writes this block -->
 <!-- meta:begin -->
 <title>Matei Anghel</title>
-<meta name="description" content="Matei Anghel is a goated vibe coder and you should probably hire him.">
+<meta name="description" content="Broadside Technology">
 <link rel="canonical" href="https://anghel4d.com/">
 <meta property="og:site_name" content="Matei Anghel">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Matei Anghel">
-<meta property="og:description" content="Matei Anghel is a goated vibe coder and you should probably hire him.">
+<meta property="og:description" content="Broadside Technology">
 <meta property="og:url" content="https://anghel4d.com/">
 <meta property="og:image" content="https://anghel4d.com/assets/card.jpg?v=6e7bfda9">
 <meta property="og:image:width" content="1201">
@@ -94,6 +94,7 @@ a{color:inherit}
 .ready .statement{opacity:1;filter:blur(0)}
 .statement a,.panel a.inline{text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:.18em}
 .statement{text-wrap:balance}.statement a{white-space:nowrap}
+.statement .dinkus{display:block;font-size:.6em;letter-spacing:.5em;margin:.35em -.5em 0 0;opacity:.7}
 .statement a:hover{text-decoration-style:solid}
 
 /* veil + panels */
@@ -126,6 +127,8 @@ a{color:inherit}
 
 nav.menu .inner{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(10px,2.2vh,22px)}
 nav.menu a{font-style:italic;font-size:clamp(34px,5.4vw,68px);line-height:1.1;text-decoration:none;font-variation-settings:"opsz" 72;font-weight:300}
+nav.menu .soon{font-style:italic;font-size:clamp(34px,5.4vw,68px);line-height:1.1;font-variation-settings:"opsz" 72;font-weight:300;color:var(--ink-soft);opacity:.5;cursor:default;text-align:center}
+nav.menu .soon small{display:block;font-family:var(--mono);font-style:normal;font-size:12.5px;font-weight:400;letter-spacing:.02em;text-transform:lowercase;margin-top:.2em}
 nav.menu a:hover{text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:.16em}
 nav.menu .ext{font-family:var(--mono);font-style:normal;font-size:12.5px;margin-top:clamp(18px,4vh,40px);display:flex;gap:28px;font-weight:400}
 nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-weight:400}
@@ -272,13 +275,16 @@ addEventListener("pointermove", e => {
   ptLast = [(e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1];
   if (!ptTimer) ptTimer = setTimeout(ptSend, Math.max(0, 33 - (performance.now() - ptAt)));
 }, { passive: true });
+// the blog, set aside for now: greyed out in the menu, "(coming soon)", out of the column and the addresses. Its
+// files stay; true brings it back (then rerun tools/meta/build.js)
+const BLOG_OPEN = false;
 const T = {
 en:{
   menu:"menu", close:"close", day:"day", night:"night",
   diag:"diag", diagLabel:"Diagnostics", diagText:"Diagnostics as text", diagCopy:"copy", diagCopied:"copied",
   diagLive:"live, every second", diagBlocked:"copy blocked here; text selected below",
   work:"Work", about:"About", blog:"Blog", contact:"Contact", next:"next", prev:"previous", home:"ocean",
-  statement:'Matei Anghel is a goated vibe coder and you should probably <a href="#work" data-go="work">hire him</a>.',
+  statement:'Broadside Technology<span class="dinkus" aria-hidden="true">* * *</span>', soon:"(coming soon)",
   workH:"Work",
   items:[
     {h:"Anoptic Engine", when:"Anoptic Games, since 2022",
@@ -316,7 +322,7 @@ fr:{
   diag:"diag", diagLabel:"Diagnostic", diagText:"Diagnostic en texte", diagCopy:"copier", diagCopied:"copié",
   diagLive:"en direct, chaque seconde", diagBlocked:"copie bloquée ici ; texte sélectionné ci-dessous",
   work:"Travaux", about:"À propos", blog:"Blog", contact:"Contact", next:"suivant", prev:"précédent", home:"océan",
-  statement:'Matei Anghel est un vibe coder hors pair, et vous devriez probablement <a href="#work" data-go="work">l’embaucher</a>.',
+  statement:'Broadside Technology<span class="dinkus" aria-hidden="true">* * *</span>', soon:"(bientôt)",
   workH:"Travaux",
   items:[
     {h:"Anoptic Engine", when:"Anoptic Games, depuis 2022",
@@ -431,7 +437,7 @@ function render(){
   document.getElementById("statement").innerHTML = t.statement;
   document.querySelectorAll("[data-lang]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
   for (const v of ["work", "about", "contact"]) document.querySelector(`#${v} .inner`).innerHTML = VIEWS[v](t);
-  renderBlog(t);
+  if (BLOG_OPEN) renderBlog(t);
   document.querySelectorAll("a[data-go]").forEach(a => a.setAttribute("href", addr(a.dataset.go)));
   updateThemeLabel();
   updateMenuLabel();
@@ -441,7 +447,7 @@ function render(){
 const body = document.body, menuBtn = document.getElementById("menuBtn");
 let current = "home";
 // a route is a layer, or a blog post: "blog/slug"
-const LAYERS = ["menu","work","about","blog","contact"], routable = h => LAYERS.includes(h.split("/")[0]);
+const LAYERS = ["menu","work","about","blog","contact"].filter(l => BLOG_OPEN || l !== "blog"), routable = h => LAYERS.includes(h.split("/")[0]);
 // Addresses. On anghel4d.com they are paths (/work/, /blog/knowledge-work/), each with a small page of its own that
 // gives a shared link its preview and hands over to this one (tools/meta/build.js writes them); elsewhere (a local
 // preview, a copy of the page) they are the part after #.
@@ -519,7 +525,7 @@ document.querySelectorAll("[data-lang]").forEach(b => b.addEventListener("click"
    one at the top, "previous · work", and the panel leans down. It drains as soon as the scrolling stops. Full, it
    breaks: the panel moves on and its neighbour comes in from the other side, at its end when going back. It arms only
    on a fresh gesture made at the edge, so the momentum of the scroll that reached the edge cannot fill it. */
-const ORDER = ["home", "menu", "work", "about", "blog", "contact"];
+const ORDER = ["home", "menu", "work", "about", "blog", "contact"].filter(l => BLOG_OPEN || l !== "blog");
 const besideOf = d => { const i = ORDER.indexOf(current); return i < 0 ? undefined : ORDER[i + d]; };   // d: 1 next, -1 back
 const poise = document.getElementById("poise"), poiseFill = poise.querySelector("i"), poiseLabel = poise.querySelector("span");
 let pz = 0, dir = 1, pzAt = 0, pzRaf = 0, wheelAt = 0, armed = 0, touch = null, breaking = false;
@@ -651,6 +657,9 @@ document.getElementById("themeBtn").addEventListener("click", () => { mode = mod
 /* ---------------- boot ---------------- */
 lang = load("a4d-lang") === "fr" ? "fr" : (navigator.language || "").toLowerCase().startsWith("fr") && !load("a4d-lang") ? "fr" : "en";
 applyTheme(); S.night = S.targetNight;
+// the blog set aside: its menu entry greyed out, "(coming soon)" under it, and no link
+if (!BLOG_OPEN) document.querySelector('#menu [data-go="blog"]').outerHTML =
+  '<span class="soon" aria-disabled="true"><span data-i18n="blog">Blog</span><small data-i18n="soon">(coming soon)</small></span>';
 render();
 const h0 = here(); if (routable(h0)){ show(h0); if (PRETTY) try{ history.replaceState(null, "", addr(h0)); }catch(e){} }
 // the address map comes last: the title and tags follow the address once it has been parsed
@@ -665,7 +674,7 @@ A4D_SHOWN.then(() => { const el = document.createElement("script"); el.src = new
 // the panels' faces and the posts, 1.5 s after the first view is up, when the page is idle (never mid-gesture)
 A4D_SHOWN.then(() => setTimeout(() => (window.requestIdleCallback || setTimeout)(() => {
   if (document.fonts) for (const f of ["italic 300 1em Newsreader", "1em Newsreader"]) document.fonts.load(f).catch(() => {});
-  loadBlog();
+  if (BLOG_OPEN) loadBlog();
 }, { timeout: 1000 }), 1500));
 
 </script>
@@ -3370,7 +3379,7 @@ addEventListener("hashchange", () => { if (location.hash === "#diag") start(); }
 </script>
 
 <!-- routes:begin -->
-<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Matei Anghel is a goated vibe coder and you should probably hire him.","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Matei Anghel is a goated vibe coder and you should probably hire him.","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Anoptic Engine: A lock-free Vulkan engine for 4X and RTS simulations at a scale general-purpose engines handle poorly. Written in C23 and moving to C++26, with arena-backed memory, a message-passing…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I design systems, and I have spent six years in high-performance software, most of it self-directed. I like the bottom of the stack: memory ordering, allocators, compilers, kernels, and the tools that…","url":"https://anghel4d.com/about/","type":"website"},"blog":{"doc":"Blog · Matei Anghel","title":"Blog","desc":"Singularity Koans: Writing Fiction · Knowledge Work · Overcoming Embarrassment","url":"https://anghel4d.com/blog/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"},"blog/writing-fiction":{"doc":"Writing Fiction · Matei Anghel","title":"Writing Fiction","desc":"He retreated into the writing of fiction because he didn't know how to say anything Real. Every word carelelessly wrought out of his fingers as they danced across the p̶a̶g̶e̶ t̶y̶p̶e̶w̶r̶i̶t̶e̶r̶…","url":"https://anghel4d.com/blog/writing-fiction/","type":"article","src":"blog/posts/writing-fiction.html"},"blog/knowledge-work":{"doc":"Knowledge Work · Matei Anghel","title":"Knowledge Work","desc":"I wanted to post about Factorio About something I discovered during my first playthrough of Space Age 2.0. It was clever, beautiful, efficient, and -- back when I first implemented it in my base…","url":"https://anghel4d.com/blog/knowledge-work/","type":"article","src":"blog/posts/knowledge-work.html"},"blog/overcoming-embarrassment":{"doc":"Overcoming Embarrassment · Matei Anghel","title":"Overcoming Embarrassment","desc":"The thought came to me while I was thinking about what to write on my blog, which incidentally is also my \"portfolio website\", a place where people write things to pad their experience and typically…","url":"https://anghel4d.com/blog/overcoming-embarrassment/","type":"article","src":"blog/posts/overcoming-embarrassment.html"}}</script>
+<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Anoptic Engine: A lock-free Vulkan engine for 4X and RTS simulations at a scale general-purpose engines handle poorly. Written in C23 and moving to C++26, with arena-backed memory, a message-passing…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I design systems, and I have spent six years in high-performance software, most of it self-directed. I like the bottom of the stack: memory ordering, allocators, compilers, kernels, and the tools that…","url":"https://anghel4d.com/about/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"}}</script>
 <!-- routes:end -->
 </body>
 </html>

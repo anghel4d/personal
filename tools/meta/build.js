@@ -15,7 +15,7 @@
 // of the file, so previewers that keep pictures fetch a new one.
 // Rerun it after changing the statement or a panel's opening lines.
 const fs = require("fs"), path = require("path");
-const site = require("../site.js")(), { ROOT, B } = site, T = site.T.en;
+const site = require("../site.js")(), { ROOT, B, BLOG_OPEN } = site, T = site.T.en;
 const SITE = "https://anghel4d.com", NAME = "Matei Anghel";
 const card = fs.readFileSync(path.join(ROOT, "assets", "card.jpg"));
 const CARD = `${SITE}/assets/card.jpg?v=${require("crypto").createHash("sha1").update(card).digest("hex").slice(0, 8)}`;
@@ -37,7 +37,8 @@ const plain = s => s.replace(/<[^>]+>/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "
 const opening = (s, n = 200) => s.length <= n ? s : s.slice(0, s.lastIndexOf(" ", n)).replace(/[\s,;:.\-]+$/, "") + "\u2026";
 const esc = B.esc;
 
-const home = plain(T.statement), open = T.tabs.find(x => x.open);
+// the statement's words (its dinkus, "* * *", is ornament)
+const home = plain(T.statement.replace(/<span class="dinkus"[^>]*>[^<]*<\/span>/, "")), open = T.tabs.find(x => x.open);
 const routes = {
   home: { title: NAME, desc: home },
   menu: { title: NAME, desc: home },
@@ -46,7 +47,9 @@ const routes = {
   blog: { title: T.blog, desc: `${open.t}: ${posts.filter(p => p.tab === open.id).map(p => p.h).join(" \u00b7 ")}` },
   contact: { title: T.contact, desc: T.contactLead }
 };
-for (const p of posts) routes["blog/" + p.slug] = { title: p.h, desc: opening(plain(p.first)), date: p.date, src: p.src };
+// the blog set aside: out of the address map, and its pages (blog/) left as they are, for when it comes back
+if (!BLOG_OPEN) delete routes.blog;
+if (BLOG_OPEN) for (const p of posts) routes["blog/" + p.slug] = { title: p.h, desc: opening(plain(p.first)), date: p.date, src: p.src };
 for (const [r, m] of Object.entries(routes)) {
   m.url = r === "home" ? SITE + "/" : `${SITE}/${r}/`;
   m.doc = m.title === NAME ? NAME : `${m.title} \u00b7 ${NAME}`;
@@ -110,7 +113,7 @@ for (const [r, m] of Object.entries(routes)) {
 }
 // pages left from posts that are gone
 const blogDir = path.join(ROOT, "blog");
-for (const d of fs.existsSync(blogDir) ? fs.readdirSync(blogDir) : []) {
+for (const d of BLOG_OPEN && fs.existsSync(blogDir) ? fs.readdirSync(blogDir) : []) {
   const f = path.join(blogDir, d, "index.html");
   if (!routes["blog/" + d] && fs.existsSync(f) && fs.readFileSync(f, "utf8").includes(MARK)) {
     fs.rmSync(path.join(blogDir, d), { recursive: true });
