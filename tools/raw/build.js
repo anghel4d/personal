@@ -63,7 +63,6 @@ const page = `<!doctype html>
 <title>Matei Anghel</title>
 <meta name="description" content="${esc(T.en.statement.replace(/<span class="dinkus"[^>]*>[^<]*<\/span>/, "").replace(/<[^>]+>/g, ""))}">
 <link rel="canonical" href="https://anghel4d.com/">
-<meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
 ${icon}
 ${styles}

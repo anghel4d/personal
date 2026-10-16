@@ -19,11 +19,30 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:creator" content="@pyrusdotc">
 <meta name="theme-color" content="#071824">
+<meta name="author" content="Matei Anghel">
 <link rel="icon" href="/assets/lion.svg" type="image/svg+xml">
 <noscript><meta http-equiv="refresh" content="0; url=/raw/#work"></noscript>
 <script>location.replace("/" + location.search + "#work")</script>
 </head>
-<body style="margin:0;background:#E6F0F3;color:#12313D;font:18px Georgia,serif">
-<p style="margin:24px"><a href="/#work" style="color:inherit">Work</a></p>
+<body style="margin:0;background:#E6F0F3;color:#12313D;font:18px/1.5 Georgia,serif">
+<main style="max-width:40em;margin:24px auto;padding:0 16px">
+<p><a href="/" style="color:inherit">Matei Anghel</a> · <a href="/#work" style="color:inherit">Work</a></p>
+<h1 id="workH">Work</h1><ul class="work"><li><h2>Broadside Technology</h2>
+      <p class="when">Founder, since February 2026</p><p style="margin:0">Broadside builds agentic AI systems and the simulated worlds to train them in, and does model post-training, harness engineering and systems architecture for business clients. Its first product is a swarm harness: a fast, scalable agent-to-agent communication layer for coordinating large numbers of AI agents.</p>
+      
+      </li><li><h2>Model post-training and agent systems</h2>
+      <p class="when">Independent contractor, 2023 to 2026</p><p style="margin:0">With a long-time engineering collaborator, I fine-tuned and post-trained image and text models for clients, from dataset preparation and supervised fine-tuning to reinforcement-learning post-training. Then I moved into agent harness engineering: the tools, context management and evaluation loops that let models carry out reliable multi-step work. Under NDA; references available with client permission.</p>
+      
+      </li><li><h2>Broadside Observer</h2>
+      <p class="when">Broadside Technology, since 2026</p><p style="margin:0">An agent-operated research radar in about 14k lines of TypeScript. It polls 14+ academic sources every six hours and has filed 1,800+ research cards, each with full provenance and a human approval gate. Its public endpoint has its own MCP server, so any MCP-capable LLM client can query the corpus directly.</p>
+      <p class="try">Try it: connect any MCP-capable LLM client to observer.anoptic.io/mcp and ask it for recent research on a topic you care about.</p>
+      <div class="links"><a href="https://observer.anoptic.io" target="_blank" rel="noopener">observer.anoptic.io</a><a href="https://github.com/anghel4d/broadside-observer" target="_blank" rel="noopener">source</a></div></li><li><h2>Anoptic Engine</h2>
+      <p class="when">Since 2022</p><p style="margin:0">A real-time world simulator and reinforcement-learning environment, for large-scale agent simulations that general-purpose engines handle poorly. It runs headless on servers, with deterministic replay for reproducible episodes, and its core is lock-free and data-oriented: every system talks through a message-passing event bus, over scoped arena allocators with hugepage backing, so many instances step fast side by side. Written in C23, with C++26 static reflection specializing each module’s interface at compile time, it runs alike on Linux, Windows and Apple Silicon, with a Vulkan mesh-shader renderer to watch it by, reproducible under Nix and tested under ASan, TSan and UBSan.</p>
+      
+      </li><li><h2>anolang<span class="jp" lang="ja">あの</span></h2>
+      <p class="when">Since 2026</p><p style="margin:0">Anoptic Engine’s scripting language and entity-component layer. Rules select entities by description instead of looping over objects, drawing on SQL, kdb+/q, APL and Datalog, and each statement compiles to a few vectorized column operations over the engine’s structure-of-arrays store, so observations and rewards over thousands of entities stay cheap. The toolchain is about 36k lines of Rust, compiling to BQN’s array runtime, with joins, grouped aggregation, referential integrity and conflict-free batched writes.</p>
+      
+      <div class="links"><a href="https://github.com/anghel4d/ano" target="_blank" rel="noopener">github.com/anghel4d/ano</a></div></li></ul><p class="earlier">Before all this: three years of blockchain product contracting, taking products such as Warren Lotas: The Wild Bunch from concept to launch, with ERC-721 contracts on Ethereum mainnet and full-stack React sites that processed millions of dollars. Before that, IT for the City of Kirkland, Quebec.</p>
+</main>
 </body>
 </html>
