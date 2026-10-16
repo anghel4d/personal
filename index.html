@@ -287,27 +287,32 @@ en:{
   statement:'Broadside Technology<span class="dinkus" aria-hidden="true">* * *</span>', soon:"(coming soon)",
   workH:"Work",
   items:[
-    {h:"Anoptic Engine", when:"Anoptic Games, since 2022",
-     p:"A lock-free Vulkan engine for 4X and RTS simulations at a scale general-purpose engines handle poorly. Written in C23 and moving to C++26, with arena-backed memory, a message-passing core, and parity across Linux, Windows, and Apple Silicon.", links:[]},
-    {h:"ano", jp:"あの", when:"Anoptic Games, since 2026",
-     p:"An array-relational scripting language and ECS. Gameplay rules select entities by description and compile to vectorized column operations instead of per-entity loops. The toolchain is about 36k lines of Rust; the runtime, about 11k lines of C.",
-     links:[["github.com/anghel4d/ano","https://github.com/anghel4d/ano"]]},
-    {h:"Broadside Observer", when:"Anoptic, since 2026",
-     p:"An agent-operated research radar. It reads 14+ academic sources every six hours and has filed 1,800+ research cards, each with provenance and a human approval gate. The public endpoint speaks MCP.",
-     tryit:"Try it: connect any MCP-capable LLM client to observer.anoptic.io and ask it what is new in a field you care about.",
+    {h:"Broadside Technology", when:"Founder, since February 2026",
+     p:"Broadside builds agentic AI systems and high-performance simulation software, and does model post-training, harness engineering and systems architecture for business clients. Its first product is a swarm harness: a fast, scalable agent-to-agent communication layer for coordinating large numbers of AI agents.", links:[]},
+    {h:"Model post-training and agent systems", when:"Independent contractor, 2023 to 2026",
+     p:"With a long-time engineering collaborator, I fine-tuned and post-trained image and text models for clients, from dataset preparation and supervised fine-tuning to reinforcement-learning post-training. Then I moved into agent harness engineering: the tools, context management and evaluation loops that let models carry out reliable multi-step work. Under NDA; references available with client permission.", links:[]},
+    {h:"Broadside Observer", when:"Broadside Technology, since 2026",
+     p:"An agent-operated research radar in about 14k lines of TypeScript. It polls 14+ academic sources every six hours and has filed 1,800+ research cards, each with full provenance and a human approval gate. Its public endpoint has its own MCP server, so any MCP-capable LLM client can query the corpus directly.",
+     tryit:"Try it: connect any MCP-capable LLM client to observer.anoptic.io/mcp and ask it for recent research on a topic you care about.",
      links:[["observer.anoptic.io","https://observer.anoptic.io"],["source","https://github.com/anghel4d/broadside-observer"]]},
-    {h:"Heijo", when:"Live",
-     p:"A forum and booru for topics, tags, and conversations about media. I built it and run it; 100+ people use it.",
-     links:[["heijo.org","https://heijo.org"]]}
+    {h:"Simulation engine", when:"Broadside Technology, since 2026",
+     p:"A real-time simulation engine in C23, with C++26 static reflection specializing each module’s interface at compile time, built for large-scale agent simulations that general-purpose engines handle poorly. Its core is lock-free: every system talks through a message-passing event bus, over scoped arena allocators with hugepage backing. It runs alike on Linux, Windows and Apple Silicon, with a Vulkan mesh-shader renderer, server-authoritative networking and a headless build, reproducible under Nix and tested under ASan, TSan and UBSan.", links:[]},
+    {h:"anolang", jp:"あの", when:"Since 2026",
+     p:"The simulation engine’s scripting language and entity-component layer. Rules select entities by description instead of looping over objects, drawing on SQL, kdb+/q, APL and Datalog, and each statement compiles to a few vectorized column operations over the engine’s structure-of-arrays store. The toolchain is about 36k lines of Rust, compiling to BQN’s array runtime, with joins, grouped aggregation, referential integrity and conflict-free batched writes.",
+     links:[["github.com/anghel4d/ano","https://github.com/anghel4d/ano"]]},
+    {h:"GRID COMMAND", when:"Live",
+     p:"A real-time simulation in the browser where agents take plain-language orders. An offline parser interprets them, and an optional language-model connection handles only the phrasing the parser does not recognize.",
+     links:[["rts.anoptic.games","https://rts.anoptic.games"]]}
   ],
-  earlier:"Before all this: three years of blockchain product contracting, taking NFT collections such as Warren Lotas: The Wild Bunch from concept to launch, on hand-written React sites that processed millions of dollars.",
+  earlier:"Before all this: three years of blockchain product contracting, taking products such as Warren Lotas: The Wild Bunch from concept to launch, with ERC-721 contracts on Ethereum mainnet and full-stack React sites that processed millions of dollars. Before that, IT for the City of Kirkland, Quebec.",
   aboutH:"About",
   aboutP:[
-    "I design systems, and I have spent six years in high-performance software, most of it self-directed. I like the bottom of the stack: memory ordering, allocators, compilers, kernels, and the tools that make them safe to change.",
-    "I am Canadian and Romanian, fluent in English and French, living in Romania, and open to remote work or relocation."
+    "I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.",
+    "I write the instruction files and skills that let coding agents match a codebase without re-prompting, and I design agent workflows around context: one agent holding the whole task, subagents only for busywork, a human approval before every commit, and source material treated as data that cannot direct the agent.",
+    "I studied computer science at John Abbott College and Concordia University, and left to build full time. I am Canadian, fluent in English and French, and open to remote work or relocation."
   ],
   stance:"There’s no excuse. A professional technologist in the age of AI must stay current, just as a lawyer keeps up with case law, a doctor with global health, and a security professional with the threat landscape. As a professional software maker, I hold myself to that standard and spend my free time keeping myself up to date.",
-  noted:"Named on Jane Street’s puzzle leaderboard for February through April 2025, and top 25 at NorthSec CTF 2023.",
+  noted:"Named on Jane Street’s official solver leaderboard for the February, March and April 2025 puzzles, and top 25 at NorthSec CTF 2023.",
   blogH:"Blog",
   // the blog's tabs, in order; those without "open" are greyed out. A tab's id is the element its posts are written
   // in (blog/posts/: <koan date="...">), and t[id + "Empty"] shows while it has none
@@ -325,27 +330,32 @@ fr:{
   statement:'Broadside Technology<span class="dinkus" aria-hidden="true">* * *</span>', soon:"(bientôt)",
   workH:"Travaux",
   items:[
-    {h:"Anoptic Engine", when:"Anoptic Games, depuis 2022",
-     p:"Un moteur Vulkan sans verrous pour des simulations 4X et RTS à une échelle que les moteurs généralistes gèrent mal. Écrit en C23 et en passage vers C++26, avec une mémoire par arènes, un cœur à messages et la parité entre Linux, Windows et Apple Silicon.", links:[]},
-    {h:"ano", jp:"あの", when:"Anoptic Games, depuis 2026",
-     p:"Un langage de script relationnel par tableaux, doublé d’un ECS. Les règles de jeu sélectionnent les entités par description et se compilent en opérations vectorisées sur colonnes plutôt qu’en boucles par entité. La chaîne d’outils compte environ 36k lignes de Rust ; le runtime, environ 11k lignes de C.",
-     links:[["github.com/anghel4d/ano","https://github.com/anghel4d/ano"]]},
-    {h:"Broadside Observer", when:"Anoptic, depuis 2026",
-     p:"Un radar de recherche piloté par des agents. Il lit plus de 14 sources académiques toutes les six heures et a produit plus de 1 800 fiches, chacune avec sa provenance et une validation humaine. Le point d’accès public parle MCP.",
-     tryit:"Essayez : connectez n’importe quel client LLM compatible MCP à observer.anoptic.io et demandez-lui les nouveautés d’un domaine qui vous intéresse.",
+    {h:"Broadside Technology", when:"Fondateur, depuis février 2026",
+     p:"Broadside conçoit des systèmes d’IA agentique et des logiciels de simulation haute performance, et réalise pour des entreprises du post-entraînement de modèles, de l’ingénierie de harnais d’agents et de l’architecture de systèmes. Son premier produit est un harnais d’essaim : une couche de communication entre agents, rapide et extensible, pour coordonner un grand nombre d’agents d’IA.", links:[]},
+    {h:"Post-entraînement de modèles et systèmes d’agents", when:"Contractuel indépendant, 2023 à 2026",
+     p:"Avec un collaborateur de longue date, j’ai affiné et post-entraîné des modèles d’image et de texte pour des clients, de la préparation des données et de l’affinage supervisé jusqu’au post-entraînement par apprentissage par renforcement. Je suis ensuite passé à l’ingénierie de harnais d’agents : les outils, la gestion du contexte et les boucles d’évaluation qui permettent aux modèles de mener à bien un travail en plusieurs étapes. Sous accord de confidentialité ; références disponibles avec l’accord des clients.", links:[]},
+    {h:"Broadside Observer", when:"Broadside Technology, depuis 2026",
+     p:"Un radar de recherche piloté par des agents, environ 14k lignes de TypeScript. Il interroge plus de 14 sources académiques toutes les six heures et a produit plus de 1 800 fiches, chacune avec sa provenance complète et une validation humaine. Son point d’accès public a son propre serveur MCP : n’importe quel client LLM compatible MCP peut interroger le corpus directement.",
+     tryit:"Essayez : connectez n’importe quel client LLM compatible MCP à observer.anoptic.io/mcp et demandez-lui les recherches récentes sur un sujet qui vous intéresse.",
      links:[["observer.anoptic.io","https://observer.anoptic.io"],["source","https://github.com/anghel4d/broadside-observer"]]},
-    {h:"Heijo", when:"En ligne",
-     p:"Un forum et booru pour les sujets, les tags et les discussions autour des médias. Je l’ai conçu et je l’administre ; plus de 100 personnes l’utilisent.",
-     links:[["heijo.org","https://heijo.org"]]}
+    {h:"Moteur de simulation", when:"Broadside Technology, depuis 2026",
+     p:"Un moteur de simulation en temps réel écrit en C23, où la réflexion statique de C++26 spécialise l’interface de chaque module à la compilation, conçu pour les simulations d’agents à grande échelle que les moteurs généralistes gèrent mal. Son cœur est sans verrous : chaque système communique par un bus d’événements à messages, sur des allocateurs par arènes adossés à des pages géantes. Il tourne à l’identique sous Linux, Windows et Apple Silicon, avec un rendu Vulkan à mesh shaders, un réseau à serveur faisant autorité et une version sans affichage, reproductible sous Nix et testé sous ASan, TSan et UBSan.", links:[]},
+    {h:"anolang", jp:"あの", when:"Depuis 2026",
+     p:"Le langage de script et la couche entité-composant du moteur de simulation. Les règles sélectionnent les entités par description plutôt qu’en bouclant sur des objets, en s’inspirant de SQL, kdb+/q, APL et Datalog, et chaque instruction se compile en quelques opérations vectorisées sur les colonnes du stockage du moteur. La chaîne d’outils compte environ 36k lignes de Rust et compile vers le runtime vectoriel de BQN, avec jointures, agrégations groupées, intégrité référentielle et écritures par lots sans conflit.",
+     links:[["github.com/anghel4d/ano","https://github.com/anghel4d/ano"]]},
+    {h:"GRID COMMAND", when:"En ligne",
+     p:"Une simulation en temps réel dans le navigateur où les agents reçoivent des ordres en langage courant. Un analyseur hors ligne les interprète, et une connexion facultative à un modèle de langage ne traite que les formulations que l’analyseur ne reconnaît pas.",
+     links:[["rts.anoptic.games","https://rts.anoptic.games"]]}
   ],
-  earlier:"Avant tout cela : trois ans de missions produit dans la blockchain, menant des collections NFT comme Warren Lotas: The Wild Bunch du concept au lancement, sur des sites React écrits à la main qui ont traité des millions de dollars.",
+  earlier:"Avant tout cela : trois ans de missions produit dans la blockchain, menant des produits comme Warren Lotas: The Wild Bunch du concept au lancement, avec des contrats ERC-721 sur le réseau principal d’Ethereum et des sites React complets qui ont traité des millions de dollars. Avant encore, l’informatique de la Ville de Kirkland, au Québec.",
   aboutH:"À propos",
   aboutP:[
-    "Je conçois des systèmes, et j’ai passé six ans dans le logiciel haute performance, en grande partie en autodidacte. J’aime le bas de la pile : l’ordre mémoire, les allocateurs, les compilateurs, les noyaux, et les outils qui permettent de les modifier sans crainte.",
-    "Je suis canadien et roumain, je parle couramment anglais et français, je vis en Roumanie, et je suis ouvert au travail à distance comme à une relocalisation."
+    "Je suis ingénieur logiciel, avec six ans dans les systèmes haute performance, et fondateur de Broadside Technology Corp. Je conçois des systèmes de bout en bout, des cœurs de moteur sans verrous et des allocateurs jusqu’aux compilateurs et aux chaînes de données, et je les construis vite avec les agents de programmation les plus avancés.",
+    "J’écris les fichiers d’instructions et les compétences qui permettent aux agents de programmation de suivre un code sans qu’on ait à les reprendre, et je conçois les flux d’agents autour du contexte : un agent qui porte toute la tâche, des sous-agents seulement pour les corvées, une validation humaine avant chaque commit, et les sources traitées comme des données qui ne peuvent pas diriger l’agent.",
+    "J’ai étudié l’informatique au Collège John Abbott et à l’Université Concordia, que j’ai quittée pour construire à plein temps. Je suis canadien, je parle couramment anglais et français, et je suis ouvert au travail à distance comme à une relocalisation."
   ],
   stance:"Il n’y a pas d’excuse. Un technologue professionnel à l’ère de l’IA doit rester à jour, comme un avocat suit la jurisprudence, un médecin la santé mondiale et un professionnel de la sécurité le paysage des menaces. En tant que créateur de logiciels professionnel, je m’impose cette exigence et je consacre mon temps libre à me tenir à jour.",
-  noted:"Classé au tableau des solveurs des énigmes de Jane Street de février à avril 2025, et dans le top 25 du CTF NorthSec 2023.",
+  noted:"Classé au tableau officiel des solveurs des énigmes de Jane Street pour février, mars et avril 2025, et dans le top 25 du CTF NorthSec 2023.",
   blogH:"Blog",
   tabs:[{id:"technical", t:"Technique"}, {id:"culture", t:"Culture"}, {id:"koan", t:"Koans de la singularité", open:true}],
   koanEmpty:"Les premiers koans arrivent.",
@@ -3379,7 +3389,7 @@ addEventListener("hashchange", () => { if (location.hash === "#diag") start(); }
 </script>
 
 <!-- routes:begin -->
-<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Anoptic Engine: A lock-free Vulkan engine for 4X and RTS simulations at a scale general-purpose engines handle poorly. Written in C23 and moving to C++26, with arena-backed memory, a message-passing…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I design systems, and I have spent six years in high-performance software, most of it self-directed. I like the bottom of the stack: memory ordering, allocators, compilers, kernels, and the tools that…","url":"https://anghel4d.com/about/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"}}</script>
+<script type="application/json" id="routes">{"home":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/","type":"website"},"menu":{"doc":"Matei Anghel","title":"Matei Anghel","desc":"Broadside Technology","url":"https://anghel4d.com/menu/","type":"website"},"work":{"doc":"Work · Matei Anghel","title":"Work","desc":"Broadside Technology: Broadside builds agentic AI systems and high-performance simulation software, and does model post-training, harness engineering and systems architecture for business clients. Its…","url":"https://anghel4d.com/work/","type":"website"},"about":{"doc":"About · Matei Anghel","title":"About","desc":"I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to…","url":"https://anghel4d.com/about/","type":"website"},"contact":{"doc":"Contact · Matei Anghel","title":"Contact","desc":"The fastest way to reach me is email.","url":"https://anghel4d.com/contact/","type":"website"}}</script>
 <!-- routes:end -->
 </body>
 </html>
