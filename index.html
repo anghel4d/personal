@@ -147,7 +147,6 @@ nav.menu .ext a{font-family:var(--mono);font-style:normal;font-size:12.5px;font-
 .panel .links a:hover{text-decoration-color:currentColor}
 .panel .try{margin:.75em 0 0;padding:.7em 0 .1em;border-top:1px dotted var(--rule);font-style:italic}
 .panel .earlier{margin-top:1.6em;color:var(--ink-soft)}
-.panel blockquote{margin:1.6em 0;padding:0 0 0 1.1em;border-left:1px solid var(--ink);font-style:italic;font-size:1.06em;line-height:1.55}
 .panel .tabs{display:flex;flex-wrap:wrap;gap:4px 26px;margin:-.35em 0 1.7em;padding-bottom:.55em;border-bottom:1px solid var(--rule);
   font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;text-transform:lowercase}
 .panel .tabs button{font:inherit;color:inherit;background:none;border:0;padding:10px 0;margin:-10px 0;min-height:44px;cursor:pointer;
@@ -304,7 +303,7 @@ en:{
   aboutH:"About",
   aboutP:[
     "I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.",
-    "I write the instruction files and skills that let coding agents match a codebase without re-prompting, and I design agent workflows around context: one agent holding the whole task, subagents only for busywork, a human approval before every commit, and source material treated as data that cannot direct the agent.",
+    "I have a tremendous ongoing interest in context engineering, and increasingly in long-living agentic networks such as those described in the AI Village. The central question of preserving human intent through long-running workflows, with hundreds or thousands of AI agents, is currently my main subject of study.",
     "I studied computer science at John Abbott College and Concordia University, and left to build full time. I am Canadian, fluent in English and French, and open to remote work or relocation."
   ],
   stance:"I am a perfectionist.",
@@ -344,7 +343,7 @@ fr:{
   aboutH:"À propos",
   aboutP:[
     "Je suis ingénieur logiciel, avec six ans dans les systèmes haute performance, et fondateur de Broadside Technology Corp. Je conçois des systèmes de bout en bout, des cœurs de moteur sans verrous et des allocateurs jusqu’aux compilateurs et aux chaînes de données, et je les construis vite avec les agents de programmation les plus avancés.",
-    "J’écris les fichiers d’instructions et les compétences qui permettent aux agents de programmation de suivre un code sans qu’on ait à les reprendre, et je conçois les flux d’agents autour du contexte : un agent qui porte toute la tâche, des sous-agents seulement pour les corvées, une validation humaine avant chaque commit, et les sources traitées comme des données qui ne peuvent pas diriger l’agent.",
+    "Je porte un intérêt immense et constant à l’ingénierie du contexte, et de plus en plus aux réseaux agentiques au long cours, comme ceux décrits dans l’AI Village. La question centrale de préserver l’intention humaine à travers des flux de travail au long cours, avec des centaines ou des milliers d’agents d’IA, est aujourd’hui mon principal sujet d’étude.",
     "J’ai étudié l’informatique au Collège John Abbott et à l’Université Concordia, que j’ai quittée pour construire à plein temps. Je suis canadien, je parle couramment anglais et français, et je suis ouvert au travail à distance comme à une relocalisation."
   ],
   stance:"Je suis perfectionniste.",
@@ -411,7 +410,7 @@ const VIEWS = {
       ${it.links.length ? `<div class="links">${it.links.map(l => `<a href="${l[1]}" target="_blank" rel="noopener">${esc(l[0])}</a>`).join("")}</div>` : ""}</li>`).join("") +
     `</ul><p class="earlier">${esc(t.earlier)}</p>`,
   about: t => `<h1 id="aboutH">${esc(t.aboutH)}</h1>` + t.aboutP.map(p => `<p>${esc(p)}</p>`).join("") +
-    `<blockquote>${esc(t.stance)}</blockquote><p>${esc(t.noted)}</p>`,
+    `<p>${esc(t.stance)}</p><p>${esc(t.noted)}</p>`,
   contact: t => `<h1 id="contactH">${esc(t.contactH)}</h1><div class="contact"><p>${esc(t.contactLead)}</p>
      <a class="big" href="mailto:matei3d@gmail.com">matei3d@gmail.com</a><p>${t.contactRest}</p></div>`,
   // the blog: its tabs, and the open tab's posts, each a row that unfolds (posts: null while they load; false while
