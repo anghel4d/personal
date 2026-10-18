@@ -106,8 +106,6 @@ const tags = m => [
   `<meta property="og:image:height" content="${CARD_WH[1]}">`,
   `<meta property="og:image:alt" content="${esc(CARD_ALT)}">`,
   ...(m.date ? [`<meta property="article:published_time" content="${m.date}">`, `<meta property="article:author" content="${NAME}">`] : []),
-  `<meta name="twitter:card" content="summary_large_image">`,
-  `<meta name="twitter:creator" content="@pyrusdotc">`,
   `<meta name="theme-color" content="#071824">`,
   `<meta name="author" content="${NAME}">`,
   ...(m === routes.home ? [...SAME_AS.map(u => `<link rel="me" href="${u}">`),
