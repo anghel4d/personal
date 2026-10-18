@@ -8,7 +8,7 @@ Matei Alexandru Anghel (Matei Anghel) is the founder and CEO of Broadside Techno
 
 I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.
 
-I have a tremendous ongoing interest in context engineering, and increasingly in long-living agentic networks such as those described in the AI Village. The central question of preserving human intent through long-running workflows, with hundreds or thousands of AI agents, is currently my main subject of study.
+I have a tremendous ongoing interest in context engineering, and increasingly in long-living agentic networks such as those described in the AI Village. The central question of preserving human intent through long-running workflows, with hundreds or thousands of AI agents, is currently my main area of study.
 
 I studied computer science at John Abbott College and Concordia University, and left to build full time. I am Canadian, fluent in English and French, and open to remote work or relocation.
 
