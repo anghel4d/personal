@@ -28,7 +28,7 @@ const { VIEWS } = site;
 const COMPANY = "Broadside Technology", COMPANY_URL = "https://broadside.tech";
 const HOME_DOC = `${FULL} · Founder of ${COMPANY}`;
 const HOME_DESC = `${FULL}: software engineer and AI researcher, founder and CEO of ${COMPANY}, which builds agentic AI systems and the simulated worlds to train them in.`;
-const SAME_AS = ["https://github.com/anghel4d", "https://x.com/pyrusdotc"];
+const SAME_AS = ["https://github.com/anghel4d"];
 const EMAIL = (VIEWS.contact(T).match(/mailto:([^"]+)/) || [])[1];
 if (!EMAIL) throw new Error("the contact view has no mailto: link");
 const card = fs.readFileSync(path.join(ROOT, "assets", "card.jpg"));
@@ -73,7 +73,7 @@ for (const r of ["home", "menu"]) Object.assign(routes[r], { doc: HOME_DOC, desc
 
 // the structured data: the home page is the profile of a person, who founded the company
 const person = {
-  "@type": "Person", "@id": `${SITE}/#person`, name: NAME, alternateName: [FULL, "anghel4d", "pyrusdotc"],
+  "@type": "Person", "@id": `${SITE}/#person`, name: NAME, alternateName: [FULL, "anghel4d"],
   givenName: "Matei", additionalName: "Alexandru", familyName: "Anghel", url: SITE + "/", email: "mailto:" + EMAIL,
   jobTitle: `Founder and CEO, ${COMPANY}`, worksFor: { "@id": `${SITE}/#company` }, description: plain(T.aboutP[0]),
   knowsAbout: ["Agentic AI systems", "Context engineering", "Multi-agent systems", "Model post-training", "Reinforcement learning environments",
