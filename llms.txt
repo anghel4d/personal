@@ -1,12 +1,12 @@
 # Matei Anghel
 
-> Matei Alexandru Anghel: software engineer and AI researcher, founder and CEO of Broadside Technology, which builds agentic AI systems and the simulated worlds to train them in.
+> Matei Alexandru Anghel: software engineer and AI researcher, founder and CEO of Broadside Inc, which builds agentic AI systems and the simulated worlds to train them in.
 
-Matei Alexandru Anghel (Matei Anghel) is the founder and CEO of Broadside Technology (https://broadside.tech). Site: https://anghel4d.com/
+Matei Alexandru Anghel (Matei Anghel) is the founder and CEO of Broadside Inc (https://broadside.tech). Site: https://anghel4d.com/
 
 ## About
 
-I am a software engineer with six years in high-performance systems, and the founder of Broadside Technology Corp. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.
+I am a software engineer with six years in high-performance systems, and the founder of Broadside Inc. I architect systems end to end, from lock-free engine cores and allocators to compilers and data pipelines, and I build them at speed with frontier coding agents.
 
 I have a tremendous ongoing interest in context engineering and in long-living agentic networks. The central question of preserving human intent through long-running workflows, with hundreds or thousands of AI agents, is currently my main area of study.
 
@@ -18,7 +18,7 @@ Named on Jane Street’s official solver leaderboard for the February, March and
 
 ## Work
 
-### Broadside Technology
+### Broadside Inc
 
 Founder, since February 2026.
 
@@ -32,7 +32,7 @@ With a long-time engineering collaborator, I fine-tuned and post-trained image a
 
 ### Broadside Observer
 
-Broadside Technology, since 2026.
+Broadside Inc, since 2026.
 
 An agent-operated research radar in about 14k lines of TypeScript. It polls 14+ academic sources every six hours and has filed 1,800+ research cards, each with full provenance and a human approval gate. Its public endpoint has its own MCP server, so any MCP-capable LLM client can query the corpus directly.
 

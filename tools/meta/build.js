@@ -25,7 +25,7 @@ const site = require("../site.js")(), { ROOT, B, BLOG_OPEN } = site, T = site.T.
 const SITE = "https://anghel4d.com", NAME = "Matei Anghel", FULL = "Matei Alexandru Anghel";
 const { VIEWS } = site;
 // who the site is about, for search engines: the home page's title and description, and its structured data
-const COMPANY = "Broadside Technology", COMPANY_URL = "https://broadside.tech";
+const COMPANY = "Broadside Inc", COMPANY_URL = "https://broadside.tech";
 const HOME_DOC = `${FULL} · Founder of ${COMPANY}`;
 const HOME_DESC = `${FULL}: software engineer and AI researcher, founder and CEO of ${COMPANY}, which builds agentic AI systems and the simulated worlds to train them in.`;
 const SAME_AS = ["https://github.com/anghel4d"];
